@@ -51,7 +51,7 @@ class GrpFileDatasetsIter(IterableDataset):
             rank_by_player = game.take_rank_by_player()
 
             for i in range(feature.shape[0]):
-                inputs_seq = torch.as_tensor(feature[:i + 1], dtype=torch.float64)
+                    inputs_seq = torch.as_tensor(feature[:i + 1], dtype=torch.float32)
                 self.buffer.append((
                     inputs_seq,
                     rank_by_player,
@@ -170,7 +170,7 @@ def train():
 
     pb = tqdm(total=save_every, desc='TRAIN')
     for inputs, rank_by_players in train_data_loader:
-        inputs = inputs.to(dtype=torch.float64, device=device)
+        inputs = inputs.to(dtype=torch.float32, device=device)
         rank_by_players = rank_by_players.to(dtype=torch.int64, device=device)
 
         logits = grp.forward_packed(inputs)
@@ -183,7 +183,7 @@ def train():
 
         with torch.inference_mode():
             stats['train_loss'] += loss
-            stats['train_acc'] += (logits.argmax(-1) == labels).to(torch.float64).mean()
+            stats['train_acc'] += (logits.argmax(-1) == labels).to(torch.float32).mean()
 
         steps += 1
         pb.update(1)
@@ -197,7 +197,7 @@ def train():
                 for idx, (inputs, rank_by_players) in enumerate(val_data_loader):
                     if idx == val_steps:
                         break
-                    inputs = inputs.to(dtype=torch.float64, device=device)
+                    inputs = inputs.to(dtype=torch.float32, device=device)
                     rank_by_players = rank_by_players.to(dtype=torch.int64, device=device)
 
                     logits = grp.forward_packed(inputs)
@@ -205,7 +205,7 @@ def train():
                     loss = F.cross_entropy(logits, labels)
 
                     stats['val_loss'] += loss
-                    stats['val_acc'] += (logits.argmax(-1) == labels).to(torch.float64).mean()
+                    stats['val_acc'] += (logits.argmax(-1) == labels).to(torch.float32).mean()
                     pb.update(1)
                 pb.close()
                 grp.train()

@@ -75,7 +75,7 @@ def main():
         ins = Grp.load_log('\n'.join(logs))
         feature = ins.take_feature()
         seq = list(map(
-            lambda idx: torch.as_tensor(feature[:idx+1], device=device),
+            lambda idx: torch.as_tensor(feature[:idx+1], device=device, dtype=torch.float32),
             range(len(feature)),
         ))
 

@@ -8,11 +8,11 @@ class RewardCalculator:
         self.uniform_init = uniform_init
 
         pts = pts or [3, 1, -1, -3]
-        self.pts = torch.tensor(pts, dtype=torch.float64, device=self.device)
+        self.pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
 
     def calc_grp(self, grp_feature):
         seq = list(map(
-            lambda idx: torch.as_tensor(grp_feature[:idx+1], device=self.device),
+            lambda idx: torch.as_tensor(grp_feature[:idx+1], device=self.device, dtype=torch.float32),
             range(len(grp_feature)),
         ))
 

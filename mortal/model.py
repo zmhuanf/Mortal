@@ -239,8 +239,6 @@ class GRP(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(hidden_size * num_layers, 24),
         )
-        for mod in self.modules():
-            mod.to(torch.float64)
 
         # perms are the permutations of all possible rank-by-player result
         perms = torch.tensor(list(permutations(range(4))))
@@ -248,10 +246,13 @@ class GRP(nn.Module):
         self.register_buffer('perms', perms)     # (24, 4)
         self.register_buffer('perms_t', perms_t) # (4, 24)
 
-    # input: [grand_kyoku, honba, kyotaku, s[0], s[1], s[2], s[3]]
+    # input: [grand_kyoku, honba, kyotaku, s[0..3]/1e4, remaining_kyoku,
+    #         cum_riichi[0..3], cum_agari[0..3], cum_houjuu[0..3], cum_fuuro[0..3]]
     # grand_kyoku: E1 = 0, S4 = 7, W4 = 11
     # s is 2.5 at E1
-    # s[0] is score of player id 0
+    # s[i] is score of player id i
+    # remaining_kyoku: 12 - grand_kyoku
+    # cum_*: cumulative counts from game start to current kyoku
     def forward(self, inputs: List[Tensor]):
         lengths = torch.tensor([t.shape[0] for t in inputs], dtype=torch.int64)
         inputs = pad_sequence(inputs, batch_first=True)

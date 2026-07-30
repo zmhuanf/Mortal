@@ -20,7 +20,8 @@ use tinyvec::array_vec;
 #[pyclass]
 #[derive(Clone, Default)]
 pub struct Grp {
-    // [grand_kyoku, honba, kyotaku, [score[i] / 10000]] where i is player_id
+    // [grand_kyoku, honba, kyotaku, scores[0..4]/1e4, remaining_kyoku,
+    //  cum_riichi[0..4], cum_agari[0..4], cum_houjuu[0..4], cum_fuuro[0..4]]
     pub feature: Array2<f64>,
     pub rank_by_player: [u8; 4],
     pub final_scores: [i32; 4],
@@ -88,7 +89,7 @@ impl Grp {
     }
 
     pub fn load_events(events: &[Event]) -> Result<Self> {
-        let mut game_info = vec![];
+        // 第一遍：反向扫描，定位终局排名
         let mut rank_by_player_opt = None;
         let mut final_deltas = [0; 4];
         let mut final_scores = [0; 4];
@@ -108,6 +109,34 @@ impl Grp {
                         final_deltas[actor as usize] -= 1000;
                     }
                 }
+                Event::StartKyoku { scores, .. } => {
+                    if rank_by_player_opt.is_none() {
+                        final_scores = scores;
+                        vec_add_assign(&mut final_scores, &final_deltas);
+                        let rk = Rankings::new(final_scores);
+                        // assume the sum of scores to be 100k
+                        let sum: i32 = final_scores.iter().sum();
+                        if sum < 100_000 {
+                            final_scores[rk.player_by_rank[0] as usize] += 100_000 - sum;
+                        }
+                        rank_by_player_opt = Some(rk.rank_by_player);
+                    }
+                }
+                _ => (),
+            }
+        }
+        let rank_by_player =
+            rank_by_player_opt.context("invalid log: no Hora or Ryukyoku after a StartKyoku")?;
+
+        // 第二遍：正向扫描，累计统计量并收集特征
+        let mut game_info = vec![];
+        let mut cum_riichi = [0u32; 4];
+        let mut cum_agari = [0u32; 4];
+        let mut cum_houjuu = [0u32; 4];
+        let mut cum_fuuro = [0u32; 4];
+
+        for ev in events.iter() {
+            match *ev {
                 Event::StartKyoku {
                     bakaze,
                     kyoku,
@@ -116,21 +145,6 @@ impl Grp {
                     scores,
                     ..
                 } => {
-                    if rank_by_player_opt.is_none() {
-                        final_scores = scores;
-                        vec_add_assign(&mut final_scores, &final_deltas);
-
-                        let rk = Rankings::new(final_scores);
-
-                        // assume the sum of scores to be 100k
-                        let sum: i32 = final_scores.iter().sum();
-                        if sum < 100_000 {
-                            final_scores[rk.player_by_rank[0] as usize] += 100_000 - sum;
-                        }
-
-                        rank_by_player_opt = Some(rk.rank_by_player);
-                    }
-
                     let mut kyoku_info = array_vec!([_; GRP_SIZE]);
                     let grand_kyoku = match bakaze.as_u8() {
                         tu8!(E) => kyoku - 1,
@@ -141,17 +155,35 @@ impl Grp {
                     kyoku_info.push(honba as f64);
                     kyoku_info.push(kyotaku as f64);
                     // assume player 0 is the oya at E1
-                    kyoku_info.extend(scores.iter().map(|&score| score as f64 / 10000.));
+                    kyoku_info.extend(scores.iter().map(|&s| s as f64 / 10000.));
+                    kyoku_info.push((12 - grand_kyoku) as f64);
+                    kyoku_info.extend(cum_riichi.iter().map(|&c| c as f64));
+                    kyoku_info.extend(cum_agari.iter().map(|&c| c as f64));
+                    kyoku_info.extend(cum_houjuu.iter().map(|&c| c as f64));
+                    kyoku_info.extend(cum_fuuro.iter().map(|&c| c as f64));
                     assert_eq!(kyoku_info.len(), GRP_SIZE);
-
-                    game_info.insert(0, kyoku_info);
+                    game_info.push(kyoku_info);
+                }
+                Event::ReachAccepted { actor } => {
+                    cum_riichi[actor as usize] += 1;
+                }
+                Event::Hora { actor, target, .. } => {
+                    cum_agari[actor as usize] += 1;
+                    if actor != target {
+                        cum_houjuu[target as usize] += 1;
+                    }
+                }
+                Event::Chi { actor, .. }
+                | Event::Pon { actor, .. }
+                | Event::Daiminkan { actor, .. }
+                | Event::Kakan { actor, .. }
+                | Event::Ankan { actor, .. } => {
+                    cum_fuuro[actor as usize] += 1;
                 }
                 _ => (),
             }
         }
 
-        let rank_by_player =
-            rank_by_player_opt.context("invalid log: no Hora or Ryukyoku after a StartKyoku")?;
         let shape = (game_info.len(), GRP_SIZE);
         let feature =
             Array::from_iter(game_info.into_iter().flatten()).into_shape_with_order(shape)?;

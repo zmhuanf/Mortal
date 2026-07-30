@@ -13,7 +13,12 @@ pub const ACTION_SPACE: usize = 37 // discard | kan (choice)
                               + 1  // ryukyoku
                               + 1; // pass
 // = 46
-pub const GRP_SIZE: usize = 7;
+pub const GRP_SIZE: usize = 7  // grand_kyoku, honba, kyotaku, scores[0..4]
+                              + 1  // remaining_kyoku
+                              + 4  // cumulative riichi count per player
+                              + 4  // cumulative agari count per player
+                              + 4  // cumulative houjuu count per player
+                              + 4; // cumulative fuuro count per player
 
 #[pyfunction]
 #[inline]
