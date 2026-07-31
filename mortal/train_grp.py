@@ -49,9 +49,11 @@ class GrpFileDatasetsIter(IterableDataset):
         for game in data:
             feature = game.take_feature()
             rank_by_player = game.take_rank_by_player()
+            if feature.shape[0] > 12:
+                continue
 
             for i in range(feature.shape[0]):
-                    inputs_seq = torch.as_tensor(feature[:i + 1], dtype=torch.float32)
+                inputs_seq = torch.as_tensor(feature[:i + 1], dtype=torch.float32)
                 self.buffer.append((
                     inputs_seq,
                     rank_by_player,
@@ -104,6 +106,7 @@ def train():
     optimizer = optim.AdamW(grp.parameters())
 
     state_file = cfg['state_file']
+    best_state_file = cfg['best_state_file']
     if path.exists(state_file):
         state = torch.load(state_file, weights_only=True, map_location=device)
         timestamp = datetime.fromtimestamp(state['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
@@ -111,8 +114,10 @@ def train():
         grp.load_state_dict(state['model'])
         optimizer.load_state_dict(state['optimizer'])
         steps = state['steps']
+        best_val_loss = state.get('best_val_loss', float('inf'))
     else:
         steps = 0
+        best_val_loss = float('inf')
 
     lr = cfg['optim']['lr']
     optimizer.param_groups[0]['lr'] = lr
@@ -228,7 +233,18 @@ def train():
                 'val': stats['val_acc'] / val_steps,
             }, steps)
             writer.add_scalar('lr', lr, steps)
+            writer.add_scalar('best_val_loss', best_val_loss, steps)
             writer.flush()
+
+            val_loss_avg = stats['val_loss'] / val_steps
+            if val_loss_avg < best_val_loss:
+                best_val_loss = val_loss_avg
+                torch.save({
+                    'model': grp.state_dict(),
+                    'steps': steps,
+                    'val_loss': best_val_loss,
+                }, best_state_file)
+                logging.info(f'new best val_loss: {best_val_loss:.6f} saved at step {steps:,}')
 
             for k in stats:
                 stats[k] = 0
@@ -240,6 +256,7 @@ def train():
                 'optimizer': optimizer.state_dict(),
                 'steps': steps,
                 'timestamp': datetime.now().timestamp(),
+                'best_val_loss': best_val_loss,
             }
             torch.save(state, state_file)
             pb = tqdm(total=save_every, desc='TRAIN')
