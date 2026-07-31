@@ -157,6 +157,7 @@ def train():
     stats = {
         'v_loss': 0,
         'policy_loss': 0,
+        'dqn_loss': 0,
         'next_rank_loss': 0,
     }
     all_q = torch.zeros((save_every, batch_size), device=device, dtype=torch.float32)
@@ -257,29 +258,43 @@ def train():
                 q_out = dqn(phi, masks)
                 q = q_out[range(batch_size), actions]
 
-                with torch.no_grad():
-                    next_phi = target_mortal(next_obs)
-                    next_v = target_dqn.value(next_phi).squeeze(-1)
-                    q_target = n_step_rewards + gamma ** n_step * next_v * (~is_episode_end)
+                if online:
+                    with torch.no_grad():
+                        next_phi_online = mortal(next_obs)
+                        next_a = dqn(next_phi_online, next_masks).argmax(-1, keepdim=True)
+                        next_phi = target_mortal(next_obs)
+                        next_q_target = target_dqn(next_phi, next_masks).gather(-1, next_a)
+                        q_target = n_step_rewards + gamma ** n_step * next_q_target.squeeze(-1) * (~is_episode_end)
 
-                v = dqn.value(phi).squeeze(-1)
-                td = q_target - v
-                v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
+                    dqn_loss = 0.5 * (q - q_target).pow(2).mean()
+                    v_loss = torch.tensor(0., device=device)
+                    policy_loss = torch.tensor(0., device=device)
+                else:
+                    with torch.no_grad():
+                        next_phi = target_mortal(next_obs)
+                        next_v = target_dqn.value(next_phi).squeeze(-1)
+                        q_target = n_step_rewards + gamma ** n_step * next_v * (~is_episode_end)
 
-                with torch.no_grad():
-                    adv = q_target - v
-                    exp_adv = (adv / iql_beta).clamp(max=iql_clip).exp()
-                policy_loss = -(exp_adv * q).mean()
+                    v = dqn.value(phi).squeeze(-1)
+                    td = q_target - v
+                    v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
+
+                    with torch.no_grad():
+                        adv = q_target - v
+                        exp_adv = (adv / iql_beta).clamp(max=iql_clip).exp()
+                    policy_loss = -(exp_adv * q).mean()
+                    dqn_loss = torch.tensor(0., device=device)
 
                 next_rank_logits, = aux_net(phi)
                 next_rank_loss = ce(next_rank_logits, player_ranks)
 
-                loss = v_loss + policy_loss + next_rank_loss * next_rank_weight
+                loss = v_loss + policy_loss + dqn_loss + next_rank_loss * next_rank_weight
             scaler.scale(loss / opt_step_every).backward()
 
             with torch.inference_mode():
                 stats['v_loss'] += v_loss
                 stats['policy_loss'] += policy_loss
+                stats['dqn_loss'] += dqn_loss
                 stats['next_rank_loss'] += next_rank_loss
                 all_q[idx] = q
                 all_q_target[idx] = q_target
@@ -311,6 +326,7 @@ def train():
 
                 writer.add_scalar('loss/v_loss', stats['v_loss'] / save_every, steps)
                 writer.add_scalar('loss/policy_loss', stats['policy_loss'] / save_every, steps)
+                writer.add_scalar('loss/dqn_loss', stats['dqn_loss'] / save_every, steps)
                 writer.add_scalar('loss/next_rank_loss', stats['next_rank_loss'] / save_every, steps)
                 writer.add_scalar('hparam/lr', scheduler.get_last_lr()[0], steps)
                 writer.add_histogram('q_predicted', all_q_1d, steps)

@@ -56,6 +56,9 @@ pub struct Gameplay {
     pub apply_gamma: Vec<bool>,
     pub at_turns: Vec<u8>,
     pub shantens: Vec<i8>,
+    pub is_riichi_turn: Vec<bool>,
+    pub is_agari_turn: Vec<bool>,
+    pub is_houjuu_turn: Vec<bool>,
 
     // per game
     pub grp: Grp, // actually per kyoku though
@@ -225,6 +228,15 @@ impl Gameplay {
     }
     fn take_shantens(&mut self) -> Vec<i8> {
         mem::take(&mut self.shantens)
+    }
+    fn take_is_riichi_turn(&mut self) -> Vec<bool> {
+        mem::take(&mut self.is_riichi_turn)
+    }
+    fn take_is_agari_turn(&mut self) -> Vec<bool> {
+        mem::take(&mut self.is_agari_turn)
+    }
+    fn take_is_houjuu_turn(&mut self) -> Vec<bool> {
+        mem::take(&mut self.is_houjuu_turn)
     }
 
     fn take_grp(&mut self) -> Grp {
@@ -411,15 +423,18 @@ impl Gameplay {
         };
 
         if let Some(label) = label_opt {
-            self.add_entry(ctx, false, label);
+            let is_riichi_turn = label == 37;
+            let is_agari_turn = label == 43;
+            let is_houjuu_turn = label <= 36 && wnd[1..].iter().any(|ev| matches!(ev, Event::Hora { target, .. } if *target == self.player_id));
+            self.add_entry(ctx, false, label, is_riichi_turn, is_agari_turn, is_houjuu_turn);
             if let Some(kan) = kan_select {
-                self.add_entry(ctx, true, kan);
+                self.add_entry(ctx, true, kan, false, false, false);
             }
         }
         Ok(())
     }
 
-    fn add_entry(&mut self, ctx: &LoaderContext<'_>, at_kan_select: bool, label: usize) {
+    fn add_entry(&mut self, ctx: &mut LoaderContext<'_>, at_kan_select: bool, label: usize, is_riichi_turn: bool, is_agari_turn: bool, is_houjuu_turn: bool) {
         let (feature, mask) = ctx.state.encode_obs(ctx.config.version, at_kan_select);
         self.obs.push(feature);
         self.actions.push(label as i64);
@@ -429,6 +444,9 @@ impl Gameplay {
         self.apply_gamma.push(label <= 37);
         self.at_turns.push(ctx.state.at_turn());
         self.shantens.push(ctx.state.shanten());
+        self.is_riichi_turn.push(is_riichi_turn);
+        self.is_agari_turn.push(is_agari_turn);
+        self.is_houjuu_turn.push(is_houjuu_turn);
 
         if let Some(invisibles) = ctx.invisibles {
             let invisible_obs = invisibles[ctx.kyoku_idx].encode(

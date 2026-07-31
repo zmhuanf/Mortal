@@ -65,6 +65,11 @@ ema_decay = 0.995
 [aux]
 next_rank_weight = 0.2
 
+[reward]
+riichi = 0.1
+agari = 0.3
+houjuu = -0.3
+
 [optim]
 eps = 1e-8
 betas = [0.9, 0.999]
