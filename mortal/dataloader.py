@@ -78,6 +78,8 @@ class FileDatasetsIter(IterableDataset):
         self.buffer.clear()
 
     def populate_buffer(self, file_list):
+        n_step = config['env'].get('n_step', 3)
+        gamma = float(config['env']['gamma'])
         data = self.loader.load_gz_log_files(file_list)
         for file in data:
             for game in file:
@@ -113,13 +115,26 @@ class FileDatasetsIter(IterableDataset):
                         steps_to_done[i] = steps_to_done[i + 1] + int(apply_gamma[i])
 
                 for i in range(game_size):
+                    std = steps_to_done[i]
+                    if std < n_step:
+                        # 局在 n 步内结束，reward 折扣回来
+                        n_step_r = np.float32(gamma ** std * kyoku_rewards[at_kyoku[i]])
+                        is_end = True
+                        next_idx = i
+                    else:
+                        n_step_r = np.float32(0.0)
+                        is_end = False
+                        next_idx = i + n_step
+
                     entry = [
                         obs[i],
                         actions[i],
                         masks[i],
-                        steps_to_done[i],
-                        kyoku_rewards[at_kyoku[i]],
                         player_ranks[at_kyoku[i] + 1],
+                        obs[next_idx],
+                        n_step_r,
+                        masks[next_idx],
+                        is_end,
                     ]
                     if self.oracle:
                         entry.insert(1, invisible_obs[i])

@@ -46,22 +46,24 @@ enable_augmentation = false
 augmented_first = false
 
 [env]
-gamma = 1
+gamma = 0.99
+n_step = 3
 pts = [6.0, 4.0, 2.0, 0.0]
 
 [resnet]
 conv_channels = 192
 num_blocks = 40
+layer_scale = 1e-6
+drop_rate = 0.0
 
-[cql]
-min_q_weight = 5
+[iql]
+tau = 0.7
+beta = 3.0
+clip = 50.0
+ema_decay = 0.995
 
 [aux]
 next_rank_weight = 0.2
-
-[freeze_bn]
-# `true` in online training
-mortal = false
 
 [optim]
 eps = 1e-8
@@ -111,7 +113,6 @@ log_dir = '/path/to/1v3'
 device = 'cuda:0'
 name = 'mortal'
 state_file = '/path/to/challenger.pth'
-stochastic_latent = false
 enable_compile = false
 enable_amp = true
 enable_rule_based_agari_guard = true
@@ -120,7 +121,6 @@ enable_rule_based_agari_guard = true
 device = 'cuda:0'
 name = 'baseline'
 state_file = '/path/to/baseline.pth'
-stochastic_latent = false
 enable_compile = false
 enable_amp = true
 enable_rule_based_agari_guard = true

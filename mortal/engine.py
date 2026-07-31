@@ -2,7 +2,7 @@ import json
 import traceback
 import torch
 import numpy as np
-from torch.distributions import Normal, Categorical
+from torch.distributions import Categorical
 from typing import *
 
 class MortalEngine:
@@ -13,7 +13,6 @@ class MortalEngine:
         is_oracle,
         version,
         device = None,
-        stochastic_latent = False,
         enable_amp = False,
         enable_quick_eval = True,
         enable_rule_based_agari_guard = False,
@@ -29,7 +28,6 @@ class MortalEngine:
         self.dqn = dqn.to(self.device).eval()
         self.is_oracle = is_oracle
         self.version = version
-        self.stochastic_latent = stochastic_latent
 
         self.enable_amp = enable_amp
         self.enable_quick_eval = enable_quick_eval
@@ -57,17 +55,8 @@ class MortalEngine:
             invisible_obs = torch.as_tensor(np.stack(invisible_obs, axis=0), device=self.device)
         batch_size = obs.shape[0]
 
-        match self.version:
-            case 1:
-                mu, logsig = self.brain(obs, invisible_obs)
-                if self.stochastic_latent:
-                    latent = Normal(mu, logsig.exp() + 1e-6).sample()
-                else:
-                    latent = mu
-                q_out = self.dqn(latent, masks)
-            case 2 | 3 | 4:
-                phi = self.brain(obs)
-                q_out = self.dqn(phi, masks)
+        phi = self.brain(obs, invisible_obs)
+        q_out = self.dqn(phi, masks)
 
         if self.boltzmann_epsilon > 0:
             is_greedy = torch.full((batch_size,), 1-self.boltzmann_epsilon, device=self.device).bernoulli().to(torch.bool)

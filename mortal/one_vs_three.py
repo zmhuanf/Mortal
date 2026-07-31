@@ -26,10 +26,8 @@ def main():
     else:
         state = torch.load(cfg['champion']['state_file'], weights_only=True, map_location=torch.device('cpu'))
         cham_cfg = state['config']
-        version = cham_cfg['control'].get('version', 1)
-        conv_channels = cham_cfg['resnet']['conv_channels']
-        num_blocks = cham_cfg['resnet']['num_blocks']
-        mortal = Brain(version=version, conv_channels=conv_channels, num_blocks=num_blocks).eval()
+        version = cham_cfg['control'].get('version', 4)
+        mortal = Brain(version=version, **cham_cfg['resnet']).eval()
         dqn = DQN(version=version).eval()
         mortal.load_state_dict(state['mortal'])
         dqn.load_state_dict(state['current_dqn'])
@@ -49,10 +47,8 @@ def main():
 
     state = torch.load(cfg['challenger']['state_file'], weights_only=True, map_location=torch.device('cpu'))
     chal_cfg = state['config']
-    version = chal_cfg['control'].get('version', 1)
-    conv_channels = chal_cfg['resnet']['conv_channels']
-    num_blocks = chal_cfg['resnet']['num_blocks']
-    mortal = Brain(version=version, conv_channels=conv_channels, num_blocks=num_blocks).eval()
+    version = chal_cfg['control'].get('version', 4)
+    mortal = Brain(version=version, **chal_cfg['resnet']).eval()
     dqn = DQN(version=version).eval()
     mortal.load_state_dict(state['mortal'])
     dqn.load_state_dict(state['current_dqn'])

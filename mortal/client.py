@@ -16,10 +16,8 @@ def main():
     remote = (config['online']['remote']['host'], config['online']['remote']['port'])
     device = torch.device(config['control']['device'])
     version = config['control']['version']
-    num_blocks = config['resnet']['num_blocks']
-    conv_channels = config['resnet']['conv_channels']
 
-    mortal = Brain(version=version, num_blocks=num_blocks, conv_channels=conv_channels).to(device).eval()
+    mortal = Brain(version=version, **config['resnet']).to(device).eval()
     dqn = DQN(version=version).to(device)
     if config['online']['enable_compile']:
         mortal.compile()

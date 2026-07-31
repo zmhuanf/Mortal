@@ -29,16 +29,17 @@ def main():
     device = torch.device('cpu')
     state = torch.load(config['control']['state_file'], weights_only=True, map_location=torch.device('cpu'))
     cfg = state['config']
-    version = cfg['control'].get('version', 1)
-    num_blocks = cfg['resnet']['num_blocks']
-    conv_channels = cfg['resnet']['conv_channels']
+    version = cfg['control'].get('version', 4)
+    resnet_cfg = cfg['resnet']
+    num_blocks = resnet_cfg['num_blocks']
+    conv_channels = resnet_cfg['conv_channels']
     if 'tag' in state:
         tag = state['tag']
     else:
         time = datetime.fromtimestamp(state['timestamp'], tz=timezone.utc).strftime('%y%m%d%H')
         tag = f'mortal{version}-b{num_blocks}c{conv_channels}-t{time}'
 
-    mortal = Brain(version=version, num_blocks=num_blocks, conv_channels=conv_channels).eval()
+    mortal = Brain(version=version, **resnet_cfg).eval()
     dqn = DQN(version=version).eval()
     mortal.load_state_dict(state['mortal'])
     dqn.load_state_dict(state['current_dqn'])
