@@ -8,7 +8,7 @@ from glob import glob
 from datetime import datetime
 from torch import optim
 from torch.nn import functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, IterableDataset
 from torch.utils.tensorboard import SummaryWriter
 from model import GRP
@@ -62,11 +62,20 @@ class GrpFileDatasetsIter(IterableDataset):
             self.iterator = self.build_iter()
         return self.iterator
 
+# 按玩家分组的特征列起始索引
+PLAYER_FEATURE_STARTS = [3, 8, 12, 16, 20]
+
 def collate(batch):
     inputs = []
     lengths = []
     rank_by_players = []
     for inputs_seq, rank_by_player in batch:
+        k = random.randint(0, 3)
+        if k != 0:
+            inputs_seq = inputs_seq.clone()
+            for start in PLAYER_FEATURE_STARTS:
+                inputs_seq[:, start:start + 4] = torch.roll(inputs_seq[:, start:start + 4], -k, dims=1)
+            rank_by_player = [*rank_by_player[k:], *rank_by_player[:k]]
         inputs.append(inputs_seq)
         lengths.append(len(inputs_seq))
         rank_by_players.append(rank_by_player)
@@ -74,11 +83,9 @@ def collate(batch):
     lengths = torch.tensor(lengths)
     rank_by_players = torch.tensor(rank_by_players, dtype=torch.int64, pin_memory=True)
 
-    padded = pad_sequence(inputs, batch_first=True)
-    packed_inputs = pack_padded_sequence(padded, lengths, batch_first=True, enforce_sorted=False)
-    packed_inputs.pin_memory()
+    padded = pad_sequence(inputs, batch_first=True).pin_memory()
 
-    return packed_inputs, rank_by_players
+    return padded, lengths, rank_by_players
 
 def train():
     cfg = config['grp']
@@ -169,13 +176,14 @@ def train():
     logging.info(f'total steps: {steps:,} est. {approx_percent:6.3f}%')
 
     pb = tqdm(total=save_every, desc='TRAIN')
-    for inputs, rank_by_players in train_data_loader:
-        inputs = inputs.to(dtype=torch.float32, device=device)
+    for padded, lengths, rank_by_players in train_data_loader:
+        padded = padded.to(dtype=torch.float32, device=device)
+        lengths = lengths.to(device=device)
         rank_by_players = rank_by_players.to(dtype=torch.int64, device=device)
 
-        logits = grp.forward_packed(inputs)
+        logits = grp.forward_padded(padded, lengths)
         labels = grp.get_label(rank_by_players)
-        loss = F.cross_entropy(logits, labels)
+        loss = F.cross_entropy(logits.reshape(-1, 4), labels.reshape(-1, 4))
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -183,7 +191,7 @@ def train():
 
         with torch.inference_mode():
             stats['train_loss'] += loss
-            stats['train_acc'] += (logits.argmax(-1) == labels).to(torch.float32).mean()
+            stats['train_acc'] += (logits.reshape(-1, 4).argmax(-1) == labels.reshape(-1, 4).argmax(-1)).to(torch.float32).mean()
 
         steps += 1
         pb.update(1)
@@ -194,18 +202,19 @@ def train():
             with torch.inference_mode():
                 grp.eval()
                 pb = tqdm(total=val_steps, desc='VAL')
-                for idx, (inputs, rank_by_players) in enumerate(val_data_loader):
+                for idx, (padded, lengths, rank_by_players) in enumerate(val_data_loader):
                     if idx == val_steps:
                         break
-                    inputs = inputs.to(dtype=torch.float32, device=device)
+                    padded = padded.to(dtype=torch.float32, device=device)
+                    lengths = lengths.to(device=device)
                     rank_by_players = rank_by_players.to(dtype=torch.int64, device=device)
 
-                    logits = grp.forward_packed(inputs)
+                    logits = grp.forward_padded(padded, lengths)
                     labels = grp.get_label(rank_by_players)
-                    loss = F.cross_entropy(logits, labels)
+                    loss = F.cross_entropy(logits.reshape(-1, 4), labels.reshape(-1, 4))
 
                     stats['val_loss'] += loss
-                    stats['val_acc'] += (logits.argmax(-1) == labels).to(torch.float32).mean()
+                    stats['val_acc'] += (logits.reshape(-1, 4).argmax(-1) == labels.reshape(-1, 4).argmax(-1)).to(torch.float32).mean()
                     pb.update(1)
                 pb.close()
                 grp.train()

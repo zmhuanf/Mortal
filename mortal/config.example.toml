@@ -134,8 +134,9 @@ tactics = '/path/to/tactics.json'
 state_file = '/path/to/grp.pth'
 
 [grp.network]
-hidden_size = 64
+hidden_size = 128
 num_layers = 2
+nhead = 4
 
 [grp.control]
 device = 'cuda:0'

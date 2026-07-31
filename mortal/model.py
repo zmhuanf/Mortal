@@ -1,10 +1,9 @@
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
+from torch.nn.utils.rnn import pad_sequence
 from typing import *
 from functools import partial
-from itertools import permutations
 from libriichi.consts import obs_shape, oracle_obs_shape, ACTION_SPACE, GRP_SIZE
 
 class ChannelAttention(nn.Module):
@@ -231,57 +230,50 @@ class DQN(nn.Module):
         return q
 
 class GRP(nn.Module):
-    def __init__(self, hidden_size=64, num_layers=2):
+    def __init__(self, hidden_size=128, num_layers=2, nhead=4):
         super().__init__()
-        self.rnn = nn.GRU(input_size=GRP_SIZE, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.input_proj = nn.Linear(GRP_SIZE, hidden_size)
+        self.pos_emb = nn.Parameter(torch.zeros(1, 12, hidden_size))
+        nn.init.trunc_normal_(self.pos_emb, std=0.02)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=nhead,
+            dim_feedforward=hidden_size * 4,
+            dropout=0.1,
+            activation='gelu',
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size * num_layers, hidden_size * num_layers),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_size * num_layers, 24),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_size, 16),
         )
 
-        # perms are the permutations of all possible rank-by-player result
-        perms = torch.tensor(list(permutations(range(4))))
-        perms_t = perms.transpose(0, 1)
-        self.register_buffer('perms', perms)     # (24, 4)
-        self.register_buffer('perms_t', perms_t) # (4, 24)
-
-    # input: [grand_kyoku, honba, kyotaku, s[0..3]/1e4, remaining_kyoku,
-    #         cum_riichi[0..3], cum_agari[0..3], cum_houjuu[0..3], cum_fuuro[0..3]]
-    # grand_kyoku: E1 = 0, S4 = 7, W4 = 11
-    # s is 2.5 at E1
-    # s[i] is score of player id i
-    # remaining_kyoku: 12 - grand_kyoku
-    # cum_*: cumulative counts from game start to current kyoku
     def forward(self, inputs: List[Tensor]):
         lengths = torch.tensor([t.shape[0] for t in inputs], dtype=torch.int64)
-        inputs = pad_sequence(inputs, batch_first=True)
-        packed_inputs = pack_padded_sequence(inputs, lengths, batch_first=True, enforce_sorted=False)
-        return self.forward_packed(packed_inputs)
+        padded = pad_sequence(inputs, batch_first=True)
+        return self.forward_padded(padded, lengths)
 
-    def forward_packed(self, packed_inputs):
-        _, state = self.rnn(packed_inputs)
-        state = state.transpose(0, 1).flatten(1)
-        logits = self.fc(state)
-        return logits
+    def forward_padded(self, padded: Tensor, lengths: Tensor):
+        mask = torch.arange(padded.shape[1], device=lengths.device)[None, :] >= lengths[:, None]
+        x = self.input_proj(padded) + self.pos_emb[:, :padded.shape[1]]
+        x = self.encoder(x, src_key_padding_mask=mask)
+        idx = (lengths - 1).clamp(min=0)
+        x = x[torch.arange(x.shape[0]), idx]
+        return self.fc(x)
 
-    # (N, 24) -> (N, player, rank_prob)
+    # (N, 16) -> (N, player, rank_prob), Sinkhorn 归一化为双随机矩阵
     def calc_matrix(self, logits: Tensor):
-        batch_size = logits.shape[0]
-        probs = logits.softmax(-1)
-        matrix = torch.zeros(batch_size, 4, 4, dtype=probs.dtype)
-        for player in range(4):
-            for rank in range(4):
-                cond = self.perms_t[player] == rank
-                matrix[:, player, rank] = probs[:, cond].sum(-1)
+        matrix = logits.reshape(-1, 4, 4).softmax(-1)
+        matrix = matrix / matrix.sum(-1, keepdim=True)  # 行归一化
+        matrix = matrix / matrix.sum(-2, keepdim=True)  # 列归一化
         return matrix
 
-    # (N, 4) -> (N)
+    # (N, 4) -> (N, 4, 4) one-hot, label[player, rank] = 1
     def get_label(self, rank_by_player: Tensor):
         batch_size = rank_by_player.shape[0]
-        perms = self.perms.expand(batch_size, -1, -1).transpose(0, 1)
-        mappings = (perms == rank_by_player).all(-1).nonzero()
-
-        labels = torch.zeros(batch_size, dtype=torch.int64, device=mappings.device)
-        labels[mappings[:, 1]] = mappings[:, 0]
+        labels = torch.zeros(batch_size, 4, 4, dtype=torch.float32, device=rank_by_player.device)
+        labels.scatter_(2, rank_by_player.unsqueeze(-1), 1)
         return labels
