@@ -82,7 +82,8 @@ class Brain(nn.Module):
         pass
 
 class AuxNet(nn.Module):
-    def __init__(self, dims=None):
+    """多任务辅助头，共享单线性层后按 dims split"""
+    def __init__(self, dims=(4, 7, 7, 7)):
         super().__init__()
         self.dims = dims
         self.net = nn.Linear(1024, sum(dims), bias=False)
@@ -91,35 +92,39 @@ class AuxNet(nn.Module):
         return self.net(x).split(self.dims, dim=-1)
 
 class DQN(nn.Module):
-    def __init__(self, *, version=1):
+    def __init__(self, *, version=1, num_heads=1):
         super().__init__()
         self.version = version
+        self.num_heads = num_heads
         match version:
             case 1:
-                self.v_head = nn.Linear(512, 1)
-                self.a_head = nn.Linear(512, ACTION_SPACE)
+                self.v_head = nn.Linear(512, num_heads)
+                self.a_head = nn.Linear(512, num_heads * ACTION_SPACE)
             case 2 | 3:
                 hidden_size = 512 if version == 2 else 256
                 self.v_head = nn.Sequential(
                     nn.Linear(1024, hidden_size),
                     nn.Mish(inplace=True),
-                    nn.Linear(hidden_size, 1),
+                    nn.Linear(hidden_size, num_heads),
                 )
                 self.a_head = nn.Sequential(
                     nn.Linear(1024, hidden_size),
                     nn.Mish(inplace=True),
-                    nn.Linear(hidden_size, ACTION_SPACE),
+                    nn.Linear(hidden_size, num_heads * ACTION_SPACE),
                 )
             case 4:
-                self.net = nn.Linear(1024, 1 + ACTION_SPACE)
+                self.net = nn.Linear(1024, num_heads * (1 + ACTION_SPACE))
                 nn.init.constant_(self.net.bias, 0)
 
     def forward(self, phi, mask):
         if self.version == 4:
-            v, a = self.net(phi).split((1, ACTION_SPACE), dim=-1)
+            v, a = self.net(phi).split((self.num_heads, self.num_heads * ACTION_SPACE), dim=-1)
+            v = v.view(-1, self.num_heads, 1)
+            a = a.view(-1, self.num_heads, ACTION_SPACE)
         else:
-            v = self.v_head(phi)
-            a = self.a_head(phi)
+            v = self.v_head(phi).unsqueeze(-1)
+            a = self.a_head(phi).view(-1, self.num_heads, ACTION_SPACE)
+        mask = mask.unsqueeze(1)
         a_sum = a.masked_fill(~mask, 0.).sum(-1, keepdim=True)
         mask_sum = mask.sum(-1, keepdim=True)
         a_mean = a_sum / mask_sum
@@ -127,10 +132,12 @@ class DQN(nn.Module):
         return q
 
     def value(self, phi):
-        """提取 V(s)，IQL 需要"""
+        """提取 V(s)，IQL 需要，返回 (N, K) 或 (N,) when K=1"""
         if self.version == 4:
-            return self.net(phi).split((1, ACTION_SPACE), dim=-1)[0]
-        return self.v_head(phi)
+            v = self.net(phi).split((self.num_heads, self.num_heads * ACTION_SPACE), dim=-1)[0]
+        else:
+            v = self.v_head(phi)
+        return v if self.num_heads > 1 else v.squeeze(-1)
 
 class GRP(nn.Module):
     def __init__(self, hidden_size=128, num_layers=2, nhead=4):

@@ -1,6 +1,3 @@
-# This is only an example. Most values are dummy placeholders just to match the
-# types; they are often not optimal and must be tuned.
-#
 # 标记说明:
 #   GRP训练      = train_grp.py 训练 GRP 模型
 #   baseline训练 = train.py 以 is_baseline=true 模式训练 baseline
@@ -20,31 +17,31 @@ version = 4
 online = false
 
 # 是否为 baseline 训练模式，true 时跳过 test_play 和 TestPlayer 初始化 (baseline训练|离线训练|在线训练)
-is_baseline = false
+is_baseline = true
 
 # 训练 checkpoint 保存路径，每次 save_every 步自动保存，可从中断处恢复 (baseline训练|离线训练|在线训练)
-state_file = '/path/to/mortal.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth'
 
 # 最优模型保存路径，test_play 评估超过历史最优时自动保存 (离线训练|在线训练)
-best_state_file = '/path/to/best.pth'
+best_state_file = 'D:/Workspace/Mortal/mortal/mortal_v2/best.pth'
 
 # TensorBoard 日志目录 (baseline训练|离线训练|在线训练)
-tensorboard_dir = '/path/to/dir'
+tensorboard_dir = 'D:/Workspace/Mortal/mortal/baseline_v1/log'
 
 # 训练用 GPU 设备 (baseline训练|离线训练|在线训练)
 device = 'cuda:0'
 
 # 是否启用 cudnn benchmark 自动选择最优卷积算法 (baseline训练|离线训练|在线训练)
-enable_cudnn_benchmark = false
+enable_cudnn_benchmark = true
 
 # 是否启用混合精度训练 (AMP) (baseline训练|离线训练|在线训练)
-enable_amp = false
+enable_amp = true
 
 # 是否启用 torch.compile 编译优化 (baseline训练|离线训练|在线训练)
 enable_compile = false
 
 # 每批样本数 (baseline训练|离线训练|在线训练)
-batch_size = 512
+batch_size = 256
 
 # 梯度累积步数，每 opt_step_every 个 batch 才执行一次 optimizer.step() (baseline训练|离线训练|在线训练)
 opt_step_every = 1
@@ -67,7 +64,7 @@ submit_every = 400
 games = 800
 
 # self-play 对局日志保存目录 (在线训练)
-log_dir = '/path/to/train_play'
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/train_play'
 
 # Boltzmann 探索的 epsilon，表示非贪婪采样的概率 (在线训练)
 boltzmann_epsilon = 0.005
@@ -90,7 +87,7 @@ repeats = 1
 games = 3000
 
 # 评估对局日志保存目录 (离线训练|在线训练)
-log_dir = '/path/to/test_play'
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/test_play'
 
 # ============================================================
 # [dataset] 牌谱数据集配置 (baseline训练|离线训练|在线训练)
@@ -98,10 +95,10 @@ log_dir = '/path/to/test_play'
 # ============================================================
 [dataset]
 # 牌谱文件 glob 模式，支持 .mjson 和 .json.gz (baseline训练|离线训练)
-globs = ['/path/to/data/**/*.mjson']
+globs = ['D:/Data/**/*.mjson']
 
 # 文件索引缓存路径，首次构建后后续启动跳过 glob 扫描 (baseline训练|离线训练)
-file_index = '/path/to/file_index.pth'
+file_index = 'D:/Workspace/Mortal/mortal/mortal_v2/file_index.pth'
 
 # 每次并行加载的文件数，影响内存占用和 IO 吞吐 (baseline训练|离线训练)
 file_batch_size = 15
@@ -110,7 +107,7 @@ file_batch_size = 15
 reserve_ratio = 0.0
 
 # DataLoader 工作进程数 (baseline训练|离线训练)
-num_workers = 1
+num_workers = 0
 
 # 只加载包含这些玩家名的牌谱，空列表 = 加载全部 (baseline训练|离线训练)
 player_names_files = []
@@ -261,7 +258,7 @@ device = 'cuda:0'
 enable_compile = false
 
 # baseline checkpoint 路径，TrainPlayer 加载作为 self-play 对手 (在线训练)
-state_file = '/path/to/baseline.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
 
 [baseline.test]
 # baseline 推理设备 (离线训练|在线训练)
@@ -271,7 +268,7 @@ device = 'cuda:0'
 enable_compile = false
 
 # baseline checkpoint 路径，TestPlayer 加载作为 test_play 对手 (离线训练|在线训练)
-state_file = '/path/to/baseline.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
 
 # ============================================================
 # [online] 在线 self-play 架构配置 (在线训练)
@@ -293,10 +290,10 @@ port = 5000
 
 [online.server]
 # self-play 对局日志缓冲目录 (在线训练)
-buffer_dir = '/path/to/buffer'
+buffer_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/buffer'
 
 # drain 目录，train.py 从这里获取训练数据 (在线训练)
-drain_dir = '/path/to/drain'
+drain_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/drain'
 
 # 缓冲区容量，达到后通知 client 停止生成新数据 (在线训练)
 capacity = 1600
@@ -318,7 +315,7 @@ games_per_iter = 2000
 iters = 500
 
 # 对战日志保存目录 (1v3)
-log_dir = '/path/to/1v3'
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/1v3'
 
 [1v3.challenger]
 # challenger 推理设备 (1v3)
@@ -328,7 +325,7 @@ device = 'cuda:0'
 name = 'mortal'
 
 # challenger checkpoint 路径 (1v3)
-state_file = '/path/to/challenger.pth'
+state_file = 'D:/Workspace/Mortal/mortal/mortal_v2/best.pth'
 
 # 是否编译 challenger 模型 (1v3)
 enable_compile = false
@@ -347,7 +344,7 @@ device = 'cuda:0'
 name = 'baseline'
 
 # champion checkpoint 路径 (1v3)
-state_file = '/path/to/baseline.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
 
 # 是否编译 champion 模型 (1v3)
 enable_compile = false
@@ -374,10 +371,10 @@ tactics = '/path/to/tactics.json'
 # ============================================================
 [grp]
 # GRP checkpoint 路径，dataloader 加载用于计算 kyoku_reward (GRP训练|baseline训练|离线训练|在线训练)
-state_file = '/path/to/grp.pth'
+state_file = 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth'
 
 # GRP 最优模型路径，train_grp.py 按验证 loss 保存 (GRP训练)
-best_state_file = '/path/to/grp_best.pth'
+best_state_file = 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth'
 
 # ============================================================
 # [grp.network] GRP 网络架构 (GRP训练|baseline训练|离线训练|在线训练)
@@ -400,10 +397,10 @@ nhead = 4
 device = 'cuda:0'
 
 # 是否启用 cudnn benchmark (GRP训练)
-enable_cudnn_benchmark = false
+enable_cudnn_benchmark = true
 
 # TensorBoard 日志目录 (GRP训练)
-tensorboard_dir = 'grp_v2/log'
+tensorboard_dir = 'D:/Workspace/Mortal/mortal/grp_v2/log'
 
 # GRP 训练 batch size (GRP训练)
 batch_size = 512
@@ -420,22 +417,16 @@ val_steps = 400
 [grp.dataset]
 # 训练集 glob 模式 (GRP训练)
 train_globs = [
-    '/path/to/dataset/2019/**/*.json.gz',
-    '/path/to/dataset/2020/**/*.json.gz',
-    '/path/to/dataset/2021/01/**/*.json.gz',
-    '/path/to/dataset/2021/02/**/*.json.gz',
-    # ...
+    'D:/Workspace/Mortal/mortal/grp_data/train/**/*.json.gz',
 ]
 
 # 验证集 glob 模式 (GRP训练)
 val_globs = [
-    '/path/to/dataset/2021/10/**/*.json.gz',
-    '/path/to/dataset/2021/11/**/*.json.gz',
-    # ...
+    'D:/Workspace/Mortal/mortal/grp_data/val/**/*.json.gz',
 ]
 
 # 文件索引缓存路径 (GRP训练)
-file_index = '/path/to/grp_file_index.pth'
+file_index = 'D:/Workspace/Mortal/mortal/grp_v2/file_index.pth'
 
 # 每次并行加载的文件数 (GRP训练)
 file_batch_size = 50

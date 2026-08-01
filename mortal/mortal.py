@@ -40,7 +40,7 @@ def main():
         tag = f'mortal{version}-b{num_blocks}c{conv_channels}-t{time}'
 
     mortal = Brain(version=version, **resnet_cfg).eval()
-    dqn = DQN(version=version).eval()
+    dqn = DQN(version=version, num_heads=cfg.get('dqn', {}).get('num_heads', 1)).eval()
     mortal.load_state_dict(state['mortal'])
     dqn.load_state_dict(state['current_dqn'])
 

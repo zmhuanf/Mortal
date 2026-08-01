@@ -18,7 +18,7 @@ def main():
     version = config['control']['version']
 
     mortal = Brain(version=version, **config['resnet']).to(device).eval()
-    dqn = DQN(version=version).to(device)
+    dqn = DQN(version=version, num_heads=config.get('dqn', {}).get('num_heads', 1)).to(device)
     if config['online']['enable_compile']:
         mortal.compile()
         dqn.compile()

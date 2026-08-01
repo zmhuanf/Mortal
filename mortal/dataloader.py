@@ -99,6 +99,9 @@ class FileDatasetsIter(IterableDataset):
                 is_riichi_turn = np.array(game.take_is_riichi_turn(), dtype=bool)
                 is_agari_turn = np.array(game.take_is_agari_turn(), dtype=bool)
                 is_houjuu_turn = np.array(game.take_is_houjuu_turn(), dtype=bool)
+                shantens = np.array(game.take_shantens(), dtype=np.int64).clip(0, 6)
+                fuuro_counts = np.frombuffer(game.take_fuuro_counts(), dtype=np.uint8).astype(np.int64).clip(0, 6)
+                riichi_turns = np.frombuffer(game.take_riichi_turns(), dtype=np.uint8).astype(np.int64)
 
                 # per game
                 grp = game.take_grp()
@@ -107,6 +110,8 @@ class FileDatasetsIter(IterableDataset):
                 game_size = len(obs)
 
                 grp_feature = grp.take_feature()
+                if grp_feature.shape[0] > 12:
+                    continue
                 rank_by_player = grp.take_rank_by_player()
                 kyoku_rewards = self.reward_calc.calc_delta_pt(player_id, grp_feature, rank_by_player)
                 assert len(kyoku_rewards) >= at_kyoku[-1] + 1 # usually they are equal, unless there is no action in the last kyoku
@@ -151,6 +156,9 @@ class FileDatasetsIter(IterableDataset):
                         n_step_r,
                         masks[next_idx],
                         is_end,
+                        shantens[i],
+                        fuuro_counts[i],
+                        riichi_turns[i],
                     ]
                     if self.oracle:
                         entry.insert(1, invisible_obs[i])

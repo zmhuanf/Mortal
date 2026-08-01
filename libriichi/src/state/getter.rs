@@ -86,6 +86,14 @@ impl PlayerState {
     pub const fn shanten(&self) -> i8 {
         self.shanten
     }
+
+    /// 自己的副露数（含暗杠）
+    #[getter]
+    #[inline]
+    #[must_use]
+    pub fn fuuro_count(&self) -> u8 {
+        self.fuuro_overview[0].len() as u8 + self.ankan_overview[0].len() as u8
+    }
     #[getter]
     #[inline]
     #[must_use]

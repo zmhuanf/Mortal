@@ -3,7 +3,6 @@ use crate::chi_type::ChiType;
 use crate::mjai::Event;
 use crate::state::PlayerState;
 use std::array;
-use std::fs::File;
 use std::io;
 use std::mem;
 
@@ -56,6 +55,8 @@ pub struct Gameplay {
     pub apply_gamma: Vec<bool>,
     pub at_turns: Vec<u8>,
     pub shantens: Vec<i8>,
+    pub fuuro_counts: Vec<u8>,
+    pub riichi_turns: Vec<u8>,
     pub is_riichi_turn: Vec<bool>,
     pub is_agari_turn: Vec<bool>,
     pub is_houjuu_turn: Vec<bool>,
@@ -153,9 +154,12 @@ impl GameplayLoader {
             .map(|f| {
                 let filename = f.as_ref();
                 let inner = || {
-                    let file = File::open(filename)?;
-                    let gz = GzDecoder::new(file);
-                    let raw = io::read_to_string(gz)?;
+                    let bytes = std::fs::read(filename)?;
+                    let raw = if bytes.starts_with(&[0x1f, 0x8b]) {
+                        io::read_to_string(GzDecoder::new(std::io::Cursor::new(bytes)))?
+                    } else {
+                        String::from_utf8(bytes)?
+                    };
                     self.load_log(&raw)
                 };
                 inner().with_context(|| format!("error when reading {filename}"))
@@ -229,6 +233,12 @@ impl Gameplay {
     fn take_shantens(&mut self) -> Vec<i8> {
         mem::take(&mut self.shantens)
     }
+    fn take_fuuro_counts(&mut self) -> Vec<u8> {
+        mem::take(&mut self.fuuro_counts)
+    }
+    fn take_riichi_turns(&mut self) -> Vec<u8> {
+        mem::take(&mut self.riichi_turns)
+    }
     fn take_is_riichi_turn(&mut self) -> Vec<bool> {
         mem::take(&mut self.is_riichi_turn)
     }
@@ -283,6 +293,8 @@ impl Gameplay {
 
         data.dones = data.at_kyoku.windows(2).map(|w| w[1] > w[0]).collect();
         data.dones.push(true);
+
+        data.fill_riichi_turns();
 
         Ok(data)
     }
@@ -444,6 +456,7 @@ impl Gameplay {
         self.apply_gamma.push(label <= 37);
         self.at_turns.push(ctx.state.at_turn());
         self.shantens.push(ctx.state.shanten());
+        self.fuuro_counts.push(ctx.state.fuuro_count().min(6));
         self.is_riichi_turn.push(is_riichi_turn);
         self.is_agari_turn.push(is_agari_turn);
         self.is_houjuu_turn.push(is_houjuu_turn);
@@ -456,6 +469,33 @@ impl Gameplay {
                 ctx.config.version,
             );
             self.invisible_obs.push(invisible_obs);
+        }
+    }
+
+    /// 按 kyoku 分组，找到该局首个 riichi 的巡目，回填到该局所有步骤
+    fn fill_riichi_turns(&mut self) {
+        let n = self.at_kyoku.len();
+        self.riichi_turns.resize(n, 0);
+
+        let mut start = 0;
+        while start < n {
+            let kyoku = self.at_kyoku[start];
+            let mut end = start + 1;
+            while end < n && self.at_kyoku[end] == kyoku {
+                end += 1;
+            }
+
+            let riichi_turn = self.is_riichi_turn[start..end]
+                .iter()
+                .position(|&r| r)
+                .map(|pos| {
+                    let turn = self.at_turns[start + pos];
+                    turn.clamp(1, 6)
+                })
+                .unwrap_or(0);
+
+            self.riichi_turns[start..end].fill(riichi_turn);
+            start = end;
         }
     }
 }

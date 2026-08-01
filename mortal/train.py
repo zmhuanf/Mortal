@@ -31,6 +31,7 @@ def train():
     version = config['control']['version']
 
     online = config['control']['online']
+    is_baseline = config['control'].get('is_baseline', False)
     batch_size = config['control']['batch_size']
     opt_step_every = config['control']['opt_step_every']
     save_every = config['control']['save_every']
@@ -38,6 +39,9 @@ def train():
     submit_every = config['control']['submit_every']
     test_games = config['test_play']['games']
     next_rank_weight = config['aux']['next_rank_weight']
+    shanten_weight = config['aux'].get('shanten_weight', 0)
+    fuuro_weight = config['aux'].get('fuuro_weight', 0)
+    riichi_turn_weight = config['aux'].get('riichi_turn_weight', 0)
     assert save_every % opt_step_every == 0
     assert test_every % save_every == 0
 
@@ -64,9 +68,12 @@ def train():
     weight_decay = config['optim']['weight_decay']
     max_grad_norm = config['optim']['max_grad_norm']
 
+    dqn_num_heads = config.get('dqn', {}).get('num_heads', 1)
+    dqn_uncertainty_scale = config.get('dqn', {}).get('uncertainty_scale', 0)
+
     mortal = Brain(version=version, **config['resnet']).to(device)
-    dqn = DQN(version=version).to(device)
-    aux_net = AuxNet((4,)).to(device)
+    dqn = DQN(version=version, num_heads=dqn_num_heads).to(device)
+    aux_net = AuxNet((4, 7, 7, 7)).to(device)
     all_models = (mortal, dqn, aux_net)
 
     target_mortal = deepcopy(mortal).eval()
@@ -105,7 +112,7 @@ def train():
     optimizer = optim.AdamW(param_groups, lr=1, weight_decay=0, betas=betas, eps=eps)
     scheduler = LinearWarmUpCosineAnnealingLR(optimizer, **config['optim']['scheduler'])
     scaler = GradScaler(device.type, enabled=enable_amp)
-    test_player = TestPlayer()
+    test_player = None if is_baseline else TestPlayer()
     best_perf = {
         'avg_rank': 4.,
         'avg_pt': -135.,
@@ -159,6 +166,9 @@ def train():
         'policy_loss': 0,
         'dqn_loss': 0,
         'next_rank_loss': 0,
+        'shanten_loss': 0,
+        'fuuro_loss': 0,
+        'riichi_turn_loss': 0,
     }
     all_q = torch.zeros((save_every, batch_size), device=device, dtype=torch.float32)
     all_q_target = torch.zeros((save_every, batch_size), device=device, dtype=torch.float32)
@@ -235,10 +245,13 @@ def train():
         remaining_n_step_rewards = []
         remaining_next_masks = []
         remaining_is_episode_end = []
+        remaining_shantens = []
+        remaining_fuuro_counts = []
+        remaining_riichi_turns = []
         remaining_bs = 0
         pb = tqdm(total=save_every, desc='TRAIN', initial=steps % save_every)
 
-        def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end):
+        def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns):
             nonlocal steps
             nonlocal idx
             nonlocal pb
@@ -251,20 +264,26 @@ def train():
             n_step_rewards = n_step_rewards.to(dtype=torch.float32, device=device)
             next_masks = next_masks.to(dtype=torch.bool, device=device)
             is_episode_end = is_episode_end.to(dtype=torch.bool, device=device)
+            shantens = shantens.to(dtype=torch.int64, device=device)
+            fuuro_counts = fuuro_counts.to(dtype=torch.int64, device=device)
+            riichi_turns = riichi_turns.to(dtype=torch.int64, device=device)
             assert masks[range(batch_size), actions].all()
 
             with torch.autocast(device.type, enabled=enable_amp):
                 phi = mortal(obs)
-                q_out = dqn(phi, masks)
-                q = q_out[range(batch_size), actions]
+                q_out = dqn(phi, masks)  # (N, K, A)
+                q = q_out[range(batch_size), :, actions]  # (N, K)
 
                 if online:
                     with torch.no_grad():
+                        # 每个 head 独立选动作，用对应 target head 估值
                         next_phi_online = mortal(next_obs)
-                        next_a = dqn(next_phi_online, next_masks).argmax(-1, keepdim=True)
+                        next_q_online = dqn(next_phi_online, next_masks)  # (N, K, A)
+                        next_a = next_q_online.argmax(-1, keepdim=True)  # (N, K, 1)
                         next_phi = target_mortal(next_obs)
-                        next_q_target = target_dqn(next_phi, next_masks).gather(-1, next_a)
-                        q_target = n_step_rewards + gamma ** n_step * next_q_target.squeeze(-1) * (~is_episode_end)
+                        next_q_target = target_dqn(next_phi, next_masks)  # (N, K, A)
+                        next_q_gathered = next_q_target.gather(-1, next_a).squeeze(-1)  # (N, K)
+                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_q_gathered * (~is_episode_end).unsqueeze(-1)  # (N, K)
 
                     dqn_loss = 0.5 * (q - q_target).pow(2).mean()
                     v_loss = torch.tensor(0., device=device)
@@ -272,10 +291,10 @@ def train():
                 else:
                     with torch.no_grad():
                         next_phi = target_mortal(next_obs)
-                        next_v = target_dqn.value(next_phi).squeeze(-1)
-                        q_target = n_step_rewards + gamma ** n_step * next_v * (~is_episode_end)
+                        next_v = target_dqn.value(next_phi)  # (N, K)
+                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_v * (~is_episode_end).unsqueeze(-1)  # (N, K)
 
-                    v = dqn.value(phi).squeeze(-1)
+                    v = dqn.value(phi)  # (N, K)
                     td = q_target - v
                     v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
 
@@ -285,10 +304,18 @@ def train():
                     policy_loss = -(exp_adv * q).mean()
                     dqn_loss = torch.tensor(0., device=device)
 
-                next_rank_logits, = aux_net(phi)
+                next_rank_logits, shanten_logits, fuuro_logits, riichi_turn_logits = aux_net(phi)
                 next_rank_loss = ce(next_rank_logits, player_ranks)
+                shanten_loss = ce(shanten_logits, shantens)
+                fuuro_loss = ce(fuuro_logits, fuuro_counts)
+                riichi_turn_loss = ce(riichi_turn_logits, riichi_turns)
 
-                loss = v_loss + policy_loss + dqn_loss + next_rank_loss * next_rank_weight
+                loss = (
+                    v_loss + policy_loss + dqn_loss + next_rank_loss * next_rank_weight
+                    + shanten_loss * shanten_weight
+                    + fuuro_loss * fuuro_weight
+                    + riichi_turn_loss * riichi_turn_weight
+                )
             scaler.scale(loss / opt_step_every).backward()
 
             with torch.inference_mode():
@@ -296,8 +323,11 @@ def train():
                 stats['policy_loss'] += policy_loss
                 stats['dqn_loss'] += dqn_loss
                 stats['next_rank_loss'] += next_rank_loss
-                all_q[idx] = q
-                all_q_target[idx] = q_target
+                stats['shanten_loss'] += shanten_loss
+                stats['fuuro_loss'] += fuuro_loss
+                stats['riichi_turn_loss'] += riichi_turn_loss
+                all_q[idx] = q.mean(-1)
+                all_q_target[idx] = q_target.mean(-1)
 
             steps += 1
             idx += 1
@@ -328,6 +358,9 @@ def train():
                 writer.add_scalar('loss/policy_loss', stats['policy_loss'] / save_every, steps)
                 writer.add_scalar('loss/dqn_loss', stats['dqn_loss'] / save_every, steps)
                 writer.add_scalar('loss/next_rank_loss', stats['next_rank_loss'] / save_every, steps)
+                writer.add_scalar('loss/shanten_loss', stats['shanten_loss'] / save_every, steps)
+                writer.add_scalar('loss/fuuro_loss', stats['fuuro_loss'] / save_every, steps)
+                writer.add_scalar('loss/riichi_turn_loss', stats['riichi_turn_loss'] / save_every, steps)
                 writer.add_scalar('hparam/lr', scheduler.get_last_lr()[0], steps)
                 writer.add_histogram('q_predicted', all_q_1d, steps)
                 writer.add_histogram('q_target', all_q_target_1d, steps)
@@ -360,7 +393,7 @@ def train():
                     submit_param(mortal, dqn, is_idle=False)
                     logging.info('param has been submitted')
 
-                if steps % test_every == 0:
+                if not is_baseline and steps % test_every == 0:
                     stat = test_player.test_play(test_games // 4, mortal, dqn, device)
                     mortal.train()
                     dqn.train()
@@ -433,7 +466,7 @@ def train():
                         sys.exit(0)
                 pb = tqdm(total=save_every, desc='TRAIN')
 
-        for obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end in data_loader:
+        for obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns in data_loader:
             bs = obs.shape[0]
             if bs != batch_size:
                 remaining_obs.append(obs)
@@ -444,9 +477,12 @@ def train():
                 remaining_n_step_rewards.append(n_step_rewards)
                 remaining_next_masks.append(next_masks)
                 remaining_is_episode_end.append(is_episode_end)
+                remaining_shantens.append(shantens)
+                remaining_fuuro_counts.append(fuuro_counts)
+                remaining_riichi_turns.append(riichi_turns)
                 remaining_bs += bs
                 continue
-            train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end)
+            train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns)
 
         remaining_batches = remaining_bs // batch_size
         if remaining_batches > 0:
@@ -458,6 +494,9 @@ def train():
             n_step_rewards = torch.cat(remaining_n_step_rewards, dim=0)
             next_masks = torch.cat(remaining_next_masks, dim=0)
             is_episode_end = torch.cat(remaining_is_episode_end, dim=0)
+            shantens = torch.cat(remaining_shantens, dim=0)
+            fuuro_counts = torch.cat(remaining_fuuro_counts, dim=0)
+            riichi_turns = torch.cat(remaining_riichi_turns, dim=0)
             start = 0
             end = batch_size
             while end <= remaining_bs:
@@ -470,6 +509,9 @@ def train():
                     n_step_rewards[start:end],
                     next_masks[start:end],
                     is_episode_end[start:end],
+                    shantens[start:end],
+                    fuuro_counts[start:end],
+                    riichi_turns[start:end],
                 )
                 start = end
                 end += batch_size

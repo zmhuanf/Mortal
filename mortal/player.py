@@ -20,8 +20,10 @@ class TestPlayer:
         cfg = state['config']
         version = cfg['control'].get('version', 4)
         resnet_cfg = cfg['resnet']
+        dqn_cfg = cfg.get('dqn', {})
+        num_heads = dqn_cfg.get('num_heads', 1)
         stable_mortal = Brain(version=version, **resnet_cfg).eval()
-        stable_dqn = DQN(version=version).eval()
+        stable_dqn = DQN(version=version, num_heads=num_heads).eval()
         stable_mortal.load_state_dict(state['mortal'])
         stable_dqn.load_state_dict(state['current_dqn'])
         if baseline_cfg['enable_compile']:
@@ -80,8 +82,10 @@ class TrainPlayer:
         cfg = state['config']
         version = cfg['control'].get('version', 4)
         resnet_cfg = cfg['resnet']
+        dqn_cfg = cfg.get('dqn', {})
+        num_heads = dqn_cfg.get('num_heads', 1)
         stable_mortal = Brain(version=version, **resnet_cfg).eval()
-        stable_dqn = DQN(version=version).eval()
+        stable_dqn = DQN(version=version, num_heads=num_heads).eval()
         stable_mortal.load_state_dict(state['mortal'])
         stable_dqn.load_state_dict(state['current_dqn'])
         if baseline_cfg['enable_compile']:
@@ -111,6 +115,7 @@ class TrainPlayer:
         self.boltzmann_epsilon = cfg['boltzmann_epsilon']
         self.boltzmann_temp = cfg['boltzmann_temp']
         self.top_p = cfg['top_p']
+        self.uncertainty_scale = config.get('dqn', {}).get('uncertainty_scale', 0)
 
         self.repeats = cfg['repeats']
         self.repeat_counter = 0
@@ -125,6 +130,7 @@ class TrainPlayer:
             boltzmann_epsilon = self.boltzmann_epsilon,
             boltzmann_temp = self.boltzmann_temp,
             top_p = self.top_p,
+            uncertainty_scale = self.uncertainty_scale,
             device = device,
             enable_amp = True,
             name = 'trainee',

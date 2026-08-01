@@ -28,7 +28,7 @@ def main():
         cham_cfg = state['config']
         version = cham_cfg['control'].get('version', 4)
         mortal = Brain(version=version, **cham_cfg['resnet']).eval()
-        dqn = DQN(version=version).eval()
+        dqn = DQN(version=version, num_heads=cham_cfg.get('dqn', {}).get('num_heads', 1)).eval()
         mortal.load_state_dict(state['mortal'])
         dqn.load_state_dict(state['current_dqn'])
         if cfg['champion']['enable_compile']:
@@ -49,7 +49,7 @@ def main():
     chal_cfg = state['config']
     version = chal_cfg['control'].get('version', 4)
     mortal = Brain(version=version, **chal_cfg['resnet']).eval()
-    dqn = DQN(version=version).eval()
+    dqn = DQN(version=version, num_heads=chal_cfg.get('dqn', {}).get('num_heads', 1)).eval()
     mortal.load_state_dict(state['mortal'])
     dqn.load_state_dict(state['current_dqn'])
     if cfg['challenger']['enable_compile']:

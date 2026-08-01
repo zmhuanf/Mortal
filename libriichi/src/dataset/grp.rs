@@ -3,7 +3,6 @@ use crate::mjai::Event;
 use crate::rankings::Rankings;
 use crate::tu8;
 use crate::vec_ops::vec_add_assign;
-use std::fs::File;
 use std::io;
 use std::mem;
 
@@ -78,9 +77,12 @@ impl Grp {
             .map(|f| {
                 let filename = f.as_ref();
                 let inner = || {
-                    let file = File::open(filename)?;
-                    let gz = GzDecoder::new(file);
-                    let raw = io::read_to_string(gz)?;
+                    let bytes = std::fs::read(filename)?;
+                    let raw = if bytes.starts_with(&[0x1f, 0x8b]) {
+                        io::read_to_string(GzDecoder::new(std::io::Cursor::new(bytes)))?
+                    } else {
+                        String::from_utf8(bytes)?
+                    };
                     Self::load_log(&raw)
                 };
                 inner().with_context(|| format!("error when reading {filename}"))
