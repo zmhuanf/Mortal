@@ -30,7 +30,7 @@ class TcpClient{
     void SendCommand(const std::string &command);
   
     protected:
-    boost::asio::io_service io_service_;
+    boost::asio::io_context io_service_;
     std::unique_ptr<boost::asio::ip::tcp::socket> socket_;
     boost::system::error_code error_;
     boost::asio::streambuf buffer_;

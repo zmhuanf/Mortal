@@ -110,6 +110,36 @@ impl OneVsThree {
             Ok(rankings)
         })
     }
+
+    /// Returns the rankings of the python agents (3 py vs 1 akochan in this case).
+    pub fn py3_vs_ako(
+        &self,
+        engine: PyObject,
+        seed_start: (u64, u64),
+        seed_count: u64,
+        py: Python<'_>,
+    ) -> Result<[i32; 4]> {
+        py.allow_threads(move || {
+            let results = self.run_batch(
+                |player_ids| AkochanAgent::new_batched(player_ids).map(|a| Box::new(a) as _),
+                |player_ids| new_py_agent(engine, player_ids),
+                seed_start,
+                seed_count,
+            )?;
+
+            let mut rankings = [0; 4];
+            for (i, result) in results.iter().enumerate() {
+                let chal_seat = i % 4;
+                // 每局统计 py 方（3 座位）的名次
+                for (seat, rank) in result.rankings().rank_by_player.iter().enumerate() {
+                    if seat != chal_seat {
+                        rankings[*rank as usize] += 1;
+                    }
+                }
+            }
+            Ok(rankings)
+        })
+    }
 }
 
 impl OneVsThree {

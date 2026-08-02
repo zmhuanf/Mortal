@@ -67,7 +67,7 @@ Moves MJAI_Interface::get_best_move(const int my_pid, const bool out_console_inp
 
 TcpClient::TcpClient(const std::string &ip, const int port){
     socket_.reset(new boost::asio::ip::tcp::socket(io_service_));
-    socket_->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::address::from_string(ip), port), error_);
+    socket_->connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(ip), port), error_);
     if(error_){
         std::cerr << "connect failed: " << error_.message() << std::endl;
         exit(1);
@@ -90,7 +90,7 @@ std::string TcpClient::ReadOneLine(){
         std::cerr << "read_until failed: " << error_.message() << std::endl;
         exit(1);
     }
-    std::string ret = boost::asio::buffer_cast<const char *>(buffer.data());
+    std::string ret(static_cast<const char *>(buffer.data().data()));
     //  std::cout << "buffer_.size(): " << buffer.size() << ", size: " << size << std::endl;
     //  buffer_.consume(size);
     //  std::cout << "received: " << ret << std::endl;

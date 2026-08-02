@@ -1,4 +1,5 @@
 #include "selector.hpp"
+#include <omp.h>
 
 Tehai_Calculator_Work tehai_calculator_work;
 bool out_console;
@@ -1020,6 +1021,7 @@ void Selector::set_selector(const Moves& game_record, const int my_pid, const Ta
 __declspec(dllexport)
 #endif
 Moves ai(const Moves& game_record, const int pid, const bool out_console_input) {
+	omp_set_num_threads(NPROCS);
 	assert(game_record.size() > 0);
     out_console = out_console_input;
 	const json11::Json& last_action = game_record[game_record.size() - 1];
