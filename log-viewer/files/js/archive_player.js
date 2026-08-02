@@ -26,6 +26,20 @@ BAKAZE_TO_STR = {
   "N": "北"
 };
 
+nextDoraPai = function(pai) {
+  var i, m, n, zi;
+  if (pai === "5mr" || pai === "5pr" || pai === "5sr") {
+    return pai.charAt(0) + pai.charAt(1);
+  }
+  if ((m = pai.match(/^([1-9])(m|p|s)$/))) {
+    n = parseInt(m[1]);
+    return "" + ((n % 9) + 1) + m[2];
+  }
+  zi = ["E", "S", "W", "N", "P", "F", "C"];
+  i = zi.indexOf(pai);
+  return zi[(i + 1) % zi.length];
+};
+
 kyokus = [];
 
 currentKyokuId = 0;
@@ -423,7 +437,8 @@ loadAction = function(action) {
         actions: [],
         bakaze: action.bakaze,
         kyokuNum: action.kyoku,
-        honba: action.honba
+        honba: action.honba,
+        oya: action.oya
       };
       kyokus.push(kyoku);
       prevBoard = board;
@@ -646,12 +661,16 @@ renderAction = function(action) {
   $("#action-label").text(formatActionText(action, nextMeta));
   $("#log-label").text((action.logs && action.logs[currentViewpoint]) || "");
   kyoku = getCurrentKyoku();
+  $("#kyoku-info").text(BAKAZE_TO_STR[kyoku.bakaze] + kyoku.kyokuNum + "局 " + kyoku.honba + "本场");
   for (i = _i = 0; _i < 4; i = ++_i) {
     player = action.board.players[i];
     view = Dytem.players.at((i - currentViewpoint + 4) % 4);
     infoView = Dytem.playerInfos.at(i);
     infoView.score.text(player.score);
     infoView.viewpoint.text(i === currentViewpoint ? "+" : "");
+    view.headerName.text(playerName(i));
+    view.headerScore.text(player.score);
+    view.headerJikaze.text(BAKAZE_TO_STR[TSUPAIS[((i - kyoku.oya + 4) % 4) + 1]]);
     if (!player.tehais) {
       renderPais([], view.tehais);
       view.tsumoPai.hide();
@@ -697,7 +716,8 @@ renderAction = function(action) {
   for (i = _j = 0, _ref3 = action.board.doraMarkers.length; 0 <= _ref3 ? _j < _ref3 : _j > _ref3; i = 0 <= _ref3 ? ++_j : --_j) {
     wanpais[i + 2] = action.board.doraMarkers[i];
   }
-  return renderPais(wanpais, Dytem.wanpais);
+  renderPais(wanpais, Dytem.wanpais);
+  return renderPais(action.board.doraMarkers.map(nextDoraPai), Dytem.doras);
 };
 
 getCurrentKyoku = function() {
@@ -705,6 +725,8 @@ getCurrentKyoku = function() {
 };
 
 renderCurrentAction = function() {
+  var max = getCurrentKyoku().actions.length - 1;
+  $("#action-range-label").text("0~" + max);
   return renderAction(getCurrentKyoku().actions[currentActionId]);
 };
 
@@ -726,6 +748,18 @@ goBack = function() {
   return renderCurrentAction();
 };
 
+goNextDahai = function() {
+  var actions, i;
+  actions = getCurrentKyoku().actions;
+  for (i = currentActionId + 1; i < actions.length; i++) {
+    if (actions[i].type === "dahai") {
+      currentActionId = i;
+      $("#action-id-label").val(currentActionId);
+      return renderCurrentAction();
+    }
+  }
+};
+
 $(function() {
   var action, bakazeStr, honba, i, j, kyokuNum, kyokuResult, label, playerInfoView, playerView, _i, _j, _k, _l, _len, _ref;
   $(window).bind("mousewheel", function(e) {
@@ -738,8 +772,26 @@ $(function() {
   });
   $("#prev-button").click(goBack);
   $("#next-button").click(goNext);
+  $("#next-dahai-button").click(goNextDahai);
   $("#go-button").click(function() {
+    var max;
     currentActionId = parseInt($("#action-id-label").val());
+    if (isNaN(currentActionId)) {
+      currentActionId = 0;
+    }
+    max = getCurrentKyoku().actions.length - 1;
+    currentActionId = Math.max(0, Math.min(currentActionId, max));
+    $("#action-id-label").val(currentActionId);
+    return renderCurrentAction();
+  });
+  $("#action-id-label").keydown(function(e) {
+    if (e.keyCode === 13) {
+      return $("#go-button").click();
+    }
+  });
+  $("#last-button").click(function() {
+    currentActionId = getCurrentKyoku().actions.length - 1;
+    $("#action-id-label").val(currentActionId);
     return renderCurrentAction();
   });
   $("#kyokuSelector").change(function() {

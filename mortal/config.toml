@@ -330,10 +330,10 @@ log_dir = 'D:/Workspace/Mortal/mortal/1v3/log'
 
 [1v3.one]
 # 模型类型：py = 自研模型，akochan = 天凤AI (1v3)
-type = 'akochan'
+type = 'py'
 
 # 显示名称 (1v3)
-name = 'akochan'
+name = 'baseline_v1'
 
 # akochan 安装目录，type=akochan 时使用 (1v3)
 dir = 'D:/Workspace/Mortal/akochan'
@@ -345,7 +345,7 @@ tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
 device = 'cuda:0'
 
 # py checkpoint 路径，type=py 时使用 (1v3)
-state_file = 'D:/Workspace/Mortal/mortal/1v3/challenger.pth'
+state_file = 'D:/Workspace/Mortal/mortal/1v3/baseline_v1.pth'
 
 # 是否编译 py 模型，type=py 时使用 (1v3)
 enable_compile = false
@@ -361,7 +361,7 @@ enable_rule_based_agari_guard = true
 type = 'py'
 
 # 显示名称 (1v3)
-name = 'mortal'
+name = 'baseline_v2'
 
 # akochan 安装目录，type=akochan 时使用 (1v3)
 dir = 'D:/Workspace/Mortal/akochan'
@@ -373,7 +373,7 @@ tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
 device = 'cuda:0'
 
 # py checkpoint 路径，type=py 时使用 (1v3)
-state_file = 'D:/Workspace/Mortal/mortal/1v3/challenger.pth'
+state_file = 'D:/Workspace/Mortal/mortal/1v3/baseline_v2.pth'
 
 # 是否编译 py 模型，type=py 时使用 (1v3)
 enable_compile = false
