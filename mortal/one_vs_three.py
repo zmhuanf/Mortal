@@ -29,7 +29,8 @@ def main():
         version = cham_cfg['control'].get('version', 4)
         mortal = Brain(version=version, **cham_cfg['resnet']).eval()
         dqn = DQN(version=version, num_heads=cham_cfg.get('dqn', {}).get('num_heads', 1)).eval()
-        mortal.load_state_dict(state['mortal'])
+        # 旧 checkpoint 无 policy_head，strict=False 随机初始化并退回 q 选动作
+        mortal.load_state_dict(state['mortal'], strict=False)
         dqn.load_state_dict(state['current_dqn'])
         if cfg['champion']['enable_compile']:
             mortal.compile()
@@ -43,6 +44,7 @@ def main():
             enable_amp = cfg['champion']['enable_amp'],
             enable_rule_based_agari_guard = cfg['champion']['enable_rule_based_agari_guard'],
             name = cfg['champion']['name'],
+            action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
         )
 
     state = torch.load(cfg['challenger']['state_file'], weights_only=True, map_location=torch.device('cpu'))
@@ -50,7 +52,8 @@ def main():
     version = chal_cfg['control'].get('version', 4)
     mortal = Brain(version=version, **chal_cfg['resnet']).eval()
     dqn = DQN(version=version, num_heads=chal_cfg.get('dqn', {}).get('num_heads', 1)).eval()
-    mortal.load_state_dict(state['mortal'])
+    # 旧 checkpoint 无 policy_head，strict=False 随机初始化并退回 q 选动作
+    mortal.load_state_dict(state['mortal'], strict=False)
     dqn.load_state_dict(state['current_dqn'])
     if cfg['challenger']['enable_compile']:
         mortal.compile()
@@ -64,6 +67,7 @@ def main():
         enable_amp = cfg['challenger']['enable_amp'],
         enable_rule_based_agari_guard = cfg['challenger']['enable_rule_based_agari_guard'],
         name = cfg['challenger']['name'],
+        action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
     )
 
     seed_start = 10000

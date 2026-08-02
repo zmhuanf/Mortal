@@ -67,6 +67,8 @@ class Brain(nn.Module):
             drop_rate=drop_rate,
         )
         self.actv = nn.GELU()
+        # 独立策略头，IQL 的 AWR 策略输出，与 DQN 价值解耦
+        self.policy_head = nn.Linear(1024, ACTION_SPACE)
 
     def forward(self, obs: Tensor, invisible_obs: Optional[Tensor] = None) -> Tensor:
         if self.is_oracle:
@@ -74,6 +76,9 @@ class Brain(nn.Module):
             obs = torch.cat((obs, invisible_obs), dim=1)
         phi = self.encoder(obs)
         return self.actv(phi)
+
+    def policy_logits(self, phi: Tensor) -> Tensor:
+        return self.policy_head(phi)
 
     def freeze_bn(self, value: bool):
         return self

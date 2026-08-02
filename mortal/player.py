@@ -24,7 +24,8 @@ class TestPlayer:
         num_heads = dqn_cfg.get('num_heads', 1)
         stable_mortal = Brain(version=version, **resnet_cfg).eval()
         stable_dqn = DQN(version=version, num_heads=num_heads).eval()
-        stable_mortal.load_state_dict(state['mortal'])
+        # 旧 checkpoint 无 policy_head，strict=False 兼容并退回 q 选动作
+        stable_mortal.load_state_dict(state['mortal'], strict=False)
         stable_dqn.load_state_dict(state['current_dqn'])
         if baseline_cfg['enable_compile']:
             stable_mortal.compile()
@@ -39,6 +40,7 @@ class TestPlayer:
             enable_amp = True,
             enable_rule_based_agari_guard = True,
             name = 'baseline',
+            action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
         )
         self.chal_version = config['control']['version']
         self.log_dir = path.abspath(config['test_play']['log_dir'])
@@ -86,7 +88,8 @@ class TrainPlayer:
         num_heads = dqn_cfg.get('num_heads', 1)
         stable_mortal = Brain(version=version, **resnet_cfg).eval()
         stable_dqn = DQN(version=version, num_heads=num_heads).eval()
-        stable_mortal.load_state_dict(state['mortal'])
+        # 旧 checkpoint 无 policy_head，strict=False 兼容并退回 q 选动作
+        stable_mortal.load_state_dict(state['mortal'], strict=False)
         stable_dqn.load_state_dict(state['current_dqn'])
         if baseline_cfg['enable_compile']:
             stable_mortal.compile()
@@ -101,6 +104,7 @@ class TrainPlayer:
             enable_amp = True,
             enable_rule_based_agari_guard = True,
             name = 'baseline',
+            action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
         )
 
         profile = os.environ.get('TRAIN_PLAY_PROFILE', 'default')

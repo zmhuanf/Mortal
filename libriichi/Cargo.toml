@@ -46,7 +46,7 @@ name = "bench"
 harness = false
 
 [features]
-default = ["pymod", "mimalloc"]
+default = ["pymod"]
 mimalloc = ["dep:mimalloc"]
 pymod = ["pyo3/extension-module"]
 abi3 = ["pyo3/abi3"]

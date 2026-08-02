@@ -41,7 +41,8 @@ def main():
 
     mortal = Brain(version=version, **resnet_cfg).eval()
     dqn = DQN(version=version, num_heads=cfg.get('dqn', {}).get('num_heads', 1)).eval()
-    mortal.load_state_dict(state['mortal'])
+    # 旧 checkpoint 无 policy_head，strict=False 随机初始化并退回 q 选动作
+    mortal.load_state_dict(state['mortal'], strict=False)
     dqn.load_state_dict(state['current_dqn'])
 
     engine = MortalEngine(
@@ -54,6 +55,7 @@ def main():
         enable_quick_eval = not review_mode,
         enable_rule_based_agari_guard = True,
         name = 'mortal',
+        action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
     )
     bot = Bot(engine, player_id)
 

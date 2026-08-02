@@ -16,6 +16,7 @@ def train():
     from datetime import datetime
     from itertools import chain
     from torch import optim, nn
+    import torch.nn.functional as F
     from torch.amp import GradScaler
     from torch.nn.utils import clip_grad_norm_
     from torch.utils.data import DataLoader
@@ -298,11 +299,15 @@ def train():
                     td = q_target - v
                     v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
 
+                    # Q 回归驱动 advantage head，Huber 防异常 td 平方放大
+                    dqn_loss = F.huber_loss(q, q_target, delta=10)
+
                     with torch.no_grad():
                         adv = q_target - v
-                        exp_adv = (adv / iql_beta).clamp(max=iql_clip).exp()
-                    policy_loss = -(exp_adv * q).mean()
-                    dqn_loss = torch.tensor(0., device=device)
+                        # 多 head ensemble 先平均 advantage，exp 上界防 fp16 溢出
+                        exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()  # (N,)
+                    log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # (N,)
+                    policy_loss = -(exp_adv * log_prob).mean()
 
                 next_rank_logits, shanten_logits, fuuro_logits, riichi_turn_logits = aux_net(phi)
                 next_rank_loss = ce(next_rank_logits, player_ranks)

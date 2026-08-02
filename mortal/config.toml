@@ -41,7 +41,7 @@ enable_amp = true
 enable_compile = false
 
 # 每批样本数 (baseline训练|离线训练|在线训练)
-batch_size = 256
+batch_size = 512
 
 # 梯度累积步数，每 opt_step_every 个 batch 才执行一次 optimizer.step() (baseline训练|离线训练|在线训练)
 opt_step_every = 1
@@ -107,7 +107,7 @@ file_batch_size = 15
 reserve_ratio = 0.0
 
 # DataLoader 工作进程数 (baseline训练|离线训练)
-num_workers = 0
+num_workers = 4
 
 # 只加载包含这些玩家名的牌谱，空列表 = 加载全部 (baseline训练|离线训练)
 player_names_files = []
@@ -163,8 +163,8 @@ tau = 0.7
 # advantage 指数缩放系数，越小越激进 (离线训练)
 beta = 3.0
 
-# exp_adv 上限，防止梯度爆炸 (离线训练)
-clip = 50.0
+# exp_adv 上限，过大易在 fp16 下溢出为 inf (离线训练)
+clip = 20.0
 
 # target network EMA 软更新系数，target = ema_decay * target + (1-ema_decay) * online (离线训练|在线训练)
 ema_decay = 0.995
@@ -226,7 +226,7 @@ betas = [0.9, 0.999]
 weight_decay = 0.1
 
 # 梯度裁剪范数，0 = 不裁剪 (baseline训练|离线训练|在线训练)
-max_grad_norm = 0
+max_grad_norm = 1.0
 
 # ============================================================
 # [optim.scheduler] 学习率调度器 (baseline训练|离线训练|在线训练)
@@ -234,16 +234,16 @@ max_grad_norm = 0
 # ============================================================
 [optim.scheduler]
 # warmup 结束后的峰值学习率 (baseline训练|离线训练|在线训练)
-peak = 1e-4
+peak = 1.5e-4
 
 # cosine 退火结束时的最终学习率 (baseline训练|离线训练|在线训练)
-final = 1e-4
+final = 3e-5
 
 # warmup 步数，0 = 不做 warmup (baseline训练|离线训练|在线训练)
-warm_up_steps = 0
+warm_up_steps = 5000
 
 # cosine 周期总步数，0 = 不做退火 (baseline训练|离线训练|在线训练)
-max_steps = 0
+max_steps = 230000
 
 # ============================================================
 # [baseline] baseline 模型 checkpoint 配置

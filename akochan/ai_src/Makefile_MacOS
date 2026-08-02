@@ -1,0 +1,74 @@
+LLVM_BASE := $(shell brew --prefix llvm)
+BOOST_BASE := $(shell brew --prefix boost)
+CPU_BRAND := $(shell sysctl -n machdep.cpu.brand_string)
+
+ifneq (,$(findstring Apple,$(CPU_BRAND)))
+	CPU_FLAGS := -mcpu=apple-m1
+else
+	CPU_FLAGS := -march=native
+endif
+
+COMPILER = $(LLVM_BASE)/bin/clang++
+NPROCS := $(shell sysctl -n hw.ncpu)
+CFLAGS = -g -MMD -MP -std=c++11 \
+	-O3 $(CPU_FLAGS) -pipe \
+	-mllvm -polly \
+	-mllvm -polly-parallel \
+	-mllvm -polly-vectorizer=stripmine \
+	-mllvm -polly-position=early \
+	-mllvm -polly-dump-before-file=before-polly.ll \
+	-fopenmp -I$(BOOST_BASE)/include -DNPROCS=$(NPROCS)
+WFLAGS = -pedantic -Wignored-qualifiers -Wreturn-type -Wunused-variable -Wno-c11-extensions
+LIBS = -L$(LLVM_BASE)/lib -L$(BOOST_BASE)/lib -lboost_system
+
+SRCDIR = .
+SHARE_DIR = ../share
+LEARN_DIR = ./learn
+
+SHARE_SOURCES = $(wildcard ./$(SHARE_DIR)/*.cpp)
+SOURCES = $(wildcard *.cpp) 
+LEARN_SOURCES = $(wildcard ./$(LEARN_DIR)/*.cpp)
+
+OBJDIR = ./obj
+SHARE_OBJDIR = ./$(SHARE_DIR)/obj
+LEARN_OBJDIR = ./$(LEARN_DIR)/obj
+
+OBJECTS = $(addprefix $(OBJDIR)/, $(notdir $(SOURCES:.cpp=.o)))
+SHARE_OBJECTS = $(addprefix $(SHARE_OBJDIR)/, $(notdir $(SHARE_SOURCES:.cpp=.o)))
+LEARN_OBJECTS = $(addprefix $(LEARN_OBJDIR)/, $(notdir $(LEARN_SOURCES:.cpp=.o)))
+
+DEPENDS   = $(OBJECTS:.o=.d)
+SHARE_DEPENDS = $(SHARE_OBJECTS:.o=.d)
+LEARN_DEPENDS = $(LEARN_OBJECTS:.o=.d)
+
+HEADERS = $(SOURCES:.cpp=.hpp)
+SHARE_HEADERS = $(SHARE_SOURCES:.cpp=.hpp)
+LEARN_HEADERS = $(LEARN_SOURCES:.cpp=.hpp)
+
+TARGET = libai.so
+
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp $(SRCDIR)/%.hpp
+	$(COMPILER) $< -c $(CFLAGS) $(WFLAGS) -o $@
+
+$(SHARE_OBJDIR)/%.o: $(SHARE_DIR)/%.cpp $(SHARE_DIR)/%.hpp
+	$(COMPILER) $< -c $(CFLAGS) $(WFLAGS) -o $@
+
+$(LEARN_OBJDIR)/%.o: $(LEARN_DIR)/%.cpp $(LEARN_DIR)/%.hpp
+	$(COMPILER) $< -c $(CFLAGS) $(WFLAGS) -o $@
+
+$(TARGET): $(OBJECTS) $(SHARE_OBJECTS) $(LEARN_OBJECTS)
+	$(COMPILER) -shared $(OBJECTS) $(SHARE_OBJECTS) $(LEARN_OBJECTS) $(CFLAGS) $(WFLAGS) $(LIBS) -o $@
+	cp $(TARGET) ../
+
+all: clean $(TARGET) copy
+
+test:
+	echo $(SHARE_OBJECTS)
+
+test1:
+	echo $(SHARE_DEPENDS)
+
+clean:
+	-rm -f $(OBJECTS) $(SHARE_OBJECTS) $(DEPENDS) $(SHARE_DEPENDS) $(TARGET) libai.so
+
+-include $(DEPENDS) $(SHARE_DEPENDS)

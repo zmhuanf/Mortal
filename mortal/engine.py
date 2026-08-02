@@ -21,6 +21,7 @@ class MortalEngine:
         boltzmann_temp = 1,
         top_p = 1,
         uncertainty_scale = 0,
+        action_source = 'q',
     ):
         self.engine_type = 'mortal'
         self.device = device or torch.device('cpu')
@@ -40,6 +41,7 @@ class MortalEngine:
         self.boltzmann_temp = boltzmann_temp
         self.top_p = top_p
         self.uncertainty_scale = uncertainty_scale
+        self.action_source = action_source
 
     def react_batch(self, obs, masks, invisible_obs):
         try:
@@ -59,25 +61,33 @@ class MortalEngine:
         batch_size = obs.shape[0]
 
         phi = self.brain(obs, invisible_obs)
-        q_out = self.dqn(phi, masks)  # (N, K, A) or (N, A) when K=1
 
-        if self.num_heads > 1:
-            q_mean = q_out.mean(1)
-            q_std = q_out.std(1)
+        if self.action_source == 'policy':
+            logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)  # (N, A)
+            values = logits
         else:
-            q_mean = q_out.squeeze(1)
-            q_std = torch.zeros_like(q_mean)
+            q_out = self.dqn(phi, masks)  # (N, K, A) or (N, A) when K=1
+            if self.num_heads > 1:
+                q_mean = q_out.mean(1)
+                q_std = q_out.std(1)
+            else:
+                q_mean = q_out.squeeze(1)
+                q_std = torch.zeros_like(q_mean)
+            if self.boltzmann_epsilon > 0:
+                logits = (q_mean / self.boltzmann_temp + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
+            else:
+                logits = q_mean.masked_fill(~masks, -torch.inf)
+            values = q_mean
 
         if self.boltzmann_epsilon > 0:
             is_greedy = torch.full((batch_size,), 1-self.boltzmann_epsilon, device=self.device).bernoulli().to(torch.bool)
-            logits = (q_mean / self.boltzmann_temp + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
             sampled = sample_top_p(logits, self.top_p)
-            actions = torch.where(is_greedy, q_mean.argmax(-1), sampled)
+            actions = torch.where(is_greedy, logits.argmax(-1), sampled)
         else:
             is_greedy = torch.ones(batch_size, dtype=torch.bool, device=self.device)
-            actions = q_mean.argmax(-1)
+            actions = logits.argmax(-1)
 
-        return actions.tolist(), q_mean.tolist(), masks.tolist(), is_greedy.tolist()
+        return actions.tolist(), values.tolist(), masks.tolist(), is_greedy.tolist()
 
 def sample_top_p(logits, p):
     if p >= 1:
