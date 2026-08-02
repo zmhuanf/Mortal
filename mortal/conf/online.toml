@@ -1,0 +1,89 @@
+# 在线 self-play 架构配置 (在线训练)
+
+# ============================================================
+# [train_play] 在线 self-play 配置 (在线训练)
+# 环境变量 TRAIN_PLAY_PROFILE 选择对应 profile，默认 'default'
+# ============================================================
+[train_play.default]
+# 每次 train_play 的对局数 (在线训练)
+games = 800
+
+# self-play 对局日志保存目录 (在线训练)
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/train_play'
+
+# Boltzmann 探索开关，>0 即启用自适应探索（温度退火 + top-p 采样），非概率含义 (在线训练)
+boltzmann_epsilon = 0.005
+
+# 已废弃，探索温度由下方 temp_max/temp_min 表现驱动退火 (在线训练)
+boltzmann_temp = 0.05
+
+# top-p 采样阈值，0.9 = 概率累积超出 0.9 的低优动作不采样，1.0 = 不做过滤 (在线训练)
+top_p = 0.9
+
+# 自适应探索温度上限，trainee 表现弱时充分探索 (在线训练)
+temp_max = 3.0
+
+# 自适应探索温度下限，trainee 表现强时接近贪心 (在线训练)
+temp_min = 0.1
+
+# trainee 滑动平均点位达到该值视为成熟，温度降到下限 (在线训练)
+target_pt = 1.0
+
+# 相同 seed 重复对局次数，用于数据增强 (在线训练)
+repeats = 1
+
+# ============================================================
+# [online] 在线 self-play 架构配置 (在线训练)
+# server.py 管理参数分发与对局收集，client.py 拉取参数进行 self-play
+# ============================================================
+[online]
+# 滑动窗口大小，用于统计最近 N 轮 self-play 的平均排名 (在线训练)
+history_window = 50
+
+# 是否编译在线训练用模型 (在线训练)
+enable_compile = false
+
+[online.remote]
+# server 监听地址 (在线训练)
+host = '127.0.0.1'
+
+# server 监听端口 (在线训练)
+port = 5000
+
+[online.server]
+# self-play 对局日志缓冲目录 (在线训练)
+buffer_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/buffer'
+
+# drain 目录，train.py 从这里获取训练数据 (在线训练)
+drain_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/drain'
+
+# 缓冲区容量，达到后通知 client 停止生成新数据 (在线训练)
+capacity = 1600
+
+# 是否强制顺序模式，true 时 trainer 忙则 client 等待 (在线训练)
+force_sequential = false
+
+# ============================================================
+# [baseline] baseline 模型 checkpoint 配置
+# test = test_play 对战对手 (离线训练|在线训练)
+# train = 在线 self-play 对战对手 (在线训练)
+# ============================================================
+[baseline.train]
+# baseline 推理设备 (在线训练)
+device = 'cuda:0'
+
+# 是否编译 baseline 模型 (在线训练)
+enable_compile = false
+
+# baseline checkpoint 路径，TrainPlayer 加载作为 self-play 对手 (在线训练)
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
+
+[baseline.test]
+# baseline 推理设备 (离线训练|在线训练)
+device = 'cuda:0'
+
+# 是否编译 baseline 模型 (离线训练|在线训练)
+enable_compile = false
+
+# baseline checkpoint 路径，TestPlayer 加载作为 test_play 对手 (离线训练|在线训练)
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'

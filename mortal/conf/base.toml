@@ -1,0 +1,92 @@
+# 通用基础架构与训练控制 (baseline训练|离线训练|在线训练|1v3|review)
+
+# ============================================================
+# [control] 基础训练控制 (baseline训练|离线训练|在线训练|1v3|review)
+# ============================================================
+[control]
+# 观测编码版本号，4 = ConvNeXt + LayerNorm 架构 (baseline训练|离线训练|在线训练|1v3|review)
+version = 4
+
+# 是否在线训练模式，false = 离线从牌谱学习，true = 在线 self-play (baseline训练|离线训练|在线训练)
+online = false
+
+# 是否为 baseline 训练模式，true 时跳过 test_play 和 TestPlayer 初始化 (baseline训练|离线训练|在线训练)
+is_baseline = true
+
+# 训练 checkpoint 保存路径，每次 save_every 步自动保存，可从中断处恢复 (baseline训练|离线训练|在线训练)
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth'
+
+# 最优模型保存路径，test_play 评估超过历史最优时自动保存 (离线训练|在线训练)
+best_state_file = 'D:/Workspace/Mortal/mortal/mortal_v2/best.pth'
+
+# TensorBoard 日志目录 (baseline训练|离线训练|在线训练)
+tensorboard_dir = 'D:/Workspace/Mortal/mortal/baseline_v1/log'
+
+# 训练用 GPU 设备 (baseline训练|离线训练|在线训练)
+device = 'cuda:0'
+
+# 是否启用 cudnn benchmark 自动选择最优卷积算法 (baseline训练|离线训练|在线训练)
+enable_cudnn_benchmark = true
+
+# 是否启用混合精度训练 (AMP) (baseline训练|离线训练|在线训练)
+enable_amp = true
+
+# 是否启用 torch.compile 编译优化 (baseline训练|离线训练|在线训练)
+enable_compile = false
+
+# 每批样本数 (baseline训练|离线训练|在线训练)
+batch_size = 512
+
+# 梯度累积步数，每 opt_step_every 个 batch 才执行一次 optimizer.step() (baseline训练|离线训练|在线训练)
+opt_step_every = 1
+
+# 每隔多少步保存 checkpoint + 写 TensorBoard (baseline训练|离线训练|在线训练)
+save_every = 400
+
+# 每隔多少步执行一次 test_play 1v3 对战评估 (离线训练|在线训练)
+test_every = 20000
+
+# 在线训练时每隔多少步向 server 提交最新参数 (在线训练)
+submit_every = 400
+
+# ============================================================
+# [env] 强化学习环境参数 (baseline训练|离线训练|在线训练)
+# ============================================================
+[env]
+# reward 折扣因子 (baseline训练|离线训练|在线训练)
+gamma = 0.99
+
+# n-step TD 的步数 (baseline训练|离线训练|在线训练)
+n_step = 3
+
+# 四个名次对应的点位，用于 GRP reward 计算 (baseline训练|离线训练|在线训练)
+pts = [6.0, 4.0, 2.0, 0.0]
+
+# ============================================================
+# [resnet] ConvNeXt Encoder 架构参数 (baseline训练|离线训练|在线训练|1v3|review)
+# 1v3/review 从 checkpoint 的 config 中读取，非此文件
+# ============================================================
+[resnet]
+# Conv1d 通道数 (baseline训练|离线训练|在线训练|1v3|review)
+conv_channels = 192
+
+# ConvNeXt block 数量 (baseline训练|离线训练|在线训练|1v3|review)
+num_blocks = 40
+
+# layer scale 初始值，使残差分支初始输出接近 0 稳定收敛 (baseline训练|离线训练|在线训练|1v3|review)
+layer_scale = 1e-6
+
+# dropout 概率，0 = 不使用 (baseline训练|离线训练|在线训练|1v3|review)
+drop_rate = 0.0
+
+# ============================================================
+# [dqn] Ensemble DQN 参数 (baseline训练|离线训练|在线训练|1v3|review)
+# num_heads 用于模型构建，所有场景都需读取
+# uncertainty_scale 仅在线训练 self-play 探索时使用
+# ============================================================
+[dqn]
+# ensemble head 数量，head 间方差驱动不确定性估计，1 = 单 head 退化为标准 DQN (baseline训练|离线训练|在线训练|1v3|review)
+num_heads = 5
+
+# 不确定性探索强度，logits += uncertainty_scale * head_std，仅 self-play 探索生效 (在线训练)
+uncertainty_scale = 2.0

@@ -1,0 +1,74 @@
+# GRP 模型配置
+# train_grp.py 用于训练，dataloader.py 加载 GRP 计算 reward
+
+# ============================================================
+# [grp] GRP 模型配置
+# ============================================================
+[grp]
+# GRP checkpoint 路径，dataloader 加载用于计算 kyoku_reward (GRP训练|baseline训练|离线训练|在线训练)
+state_file = 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth'
+
+# GRP 最优模型路径，train_grp.py 按验证 loss 保存 (GRP训练)
+best_state_file = 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth'
+
+# ============================================================
+# [grp.network] GRP 网络架构 (GRP训练|baseline训练|离线训练|在线训练)
+# ============================================================
+[grp.network]
+# Transformer hidden size (GRP训练|baseline训练|离线训练|在线训练)
+hidden_size = 128
+
+# Transformer 层数 (GRP训练|baseline训练|离线训练|在线训练)
+num_layers = 2
+
+# 多头注意力头数 (GRP训练|baseline训练|离线训练|在线训练)
+nhead = 4
+
+# ============================================================
+# [grp.control] GRP 训练控制 (GRP训练)
+# ============================================================
+[grp.control]
+# GRP 训练设备 (GRP训练)
+device = 'cuda:0'
+
+# 是否启用 cudnn benchmark (GRP训练)
+enable_cudnn_benchmark = true
+
+# TensorBoard 日志目录 (GRP训练)
+tensorboard_dir = 'D:/Workspace/Mortal/mortal/grp_v2/log'
+
+# GRP 训练 batch size (GRP训练)
+batch_size = 512
+
+# 每隔多少步保存 checkpoint + 验证 (GRP训练)
+save_every = 2000
+
+# 验证集评估步数 (GRP训练)
+val_steps = 400
+
+# ============================================================
+# [grp.dataset] GRP 训练数据 (GRP训练)
+# ============================================================
+[grp.dataset]
+# 训练集 glob 模式 (GRP训练)
+train_globs = [
+    'D:/Workspace/Mortal/mortal/grp_data/train/**/*.json.gz',
+]
+
+# 验证集 glob 模式 (GRP训练)
+val_globs = [
+    'D:/Workspace/Mortal/mortal/grp_data/val/**/*.json.gz',
+]
+
+# 文件索引缓存路径 (GRP训练)
+file_index = 'D:/Workspace/Mortal/mortal/grp_v2/file_index.pth'
+
+# 每次并行加载的文件数 (GRP训练)
+file_batch_size = 50
+
+# ============================================================
+# [grp.optim] GRP 优化器 (GRP训练)
+# ============================================================
+[grp.optim]
+# GRP 训练学习率 (GRP训练)
+lr = 1e-5
