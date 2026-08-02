@@ -3,8 +3,6 @@
 /* Original size: 44x49 */
 
 body {
-  transform: scale(2.3);
-  transform-origin: left;
   overflow-x: hidden;
 }
 
@@ -85,7 +83,14 @@ body {
   position: absolute;
   left: 550px;
   top: 0px;
-  padding: 8px; }
+  padding: 8px;
+  font-size: 12px;
+  width: 400px;
+  overflow-x: hidden; }
+
+#action-label {
+  white-space: pre-wrap;
+  word-break: break-all; }
 
 .log-label {
   font-family: monospace;

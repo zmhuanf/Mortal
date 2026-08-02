@@ -36,6 +36,251 @@ currentViewpoint = 0;
 
 playerInfos = [{}, {}, {}, {}];
 
+TILE_NAME = {
+  "1m": "1万", "2m": "2万", "3m": "3万", "4m": "4万", "5m": "5万", "6m": "6万", "7m": "7万", "8m": "8万", "9m": "9万",
+  "1p": "1筒", "2p": "2筒", "3p": "3筒", "4p": "4筒", "5p": "5筒", "6p": "6筒", "7p": "7筒", "8p": "8筒", "9p": "9筒",
+  "1s": "1索", "2s": "2索", "3s": "3索", "4s": "4索", "5s": "5索", "6s": "6索", "7s": "7索", "8s": "8索", "9s": "9索",
+  "E": "东", "S": "南", "W": "西", "N": "北", "P": "白", "F": "发", "C": "中",
+  "5mr": "赤5万", "5pr": "赤5筒", "5sr": "赤5索"
+};
+
+PAI_BY_ID = [
+  "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m",
+  "1p", "2p", "3p", "4p", "5p", "6p", "7p", "8p", "9p",
+  "1s", "2s", "3s", "4s", "5s", "6s", "7s", "8s", "9s",
+  "E", "S", "W", "N", "P", "F", "C",
+  "5mr", "5pr", "5sr"
+];
+
+paiToId = function(pai) {
+  var kind, m, zi;
+  if ((m = pai.match(/^([1-9])(m|p|s)$/))) {
+    kind = { m: 0, p: 1, s: 2 }[m[2]];
+    return kind * 9 + (parseInt(m[1]) - 1);
+  }
+  if (pai === "5mr") {
+    return 34;
+  }
+  if (pai === "5pr") {
+    return 35;
+  }
+  if (pai === "5sr") {
+    return 36;
+  }
+  zi = { E: 27, S: 28, W: 29, N: 30, P: 31, F: 32, C: 33 };
+  return zi[pai];
+};
+
+qValueForActionId = function(meta, id) {
+  var bits, i, qs, rank;
+  if (!meta || !meta.q_values || meta.mask_bits == null) {
+    return null;
+  }
+  qs = meta.q_values;
+  bits = BigInt(meta.mask_bits);
+  if (id < 0 || id > 45 || !((bits >> BigInt(id)) & 1n)) {
+    return null;
+  }
+  rank = 0;
+  for (i = 0; i <= id; i++) {
+    if ((bits >> BigInt(i)) & 1n) {
+      rank++;
+    }
+  }
+  return qs[rank - 1];
+};
+
+alignText = function(s) {
+  var i, w, _i, _len;
+  w = 0;
+  for (i = _i = 0, _len = s.length; _i < _len; i = ++_i) {
+    if (s.charCodeAt(i) > 255) {
+      w += 2;
+    } else {
+      w++;
+    }
+  }
+  return s + " ".repeat(Math.max(0, 7 - w));
+};
+
+listDiscardValues = function(meta) {
+  var bits, e, entries, i, qs, rank, tile, _i, _results;
+  if (!meta || !meta.q_values || meta.mask_bits == null) {
+    return null;
+  }
+  qs = meta.q_values;
+  bits = BigInt(meta.mask_bits);
+  entries = [];
+  rank = 0;
+  for (i = _i = 0; _i < 37; i = ++_i) {
+    if ((bits >> BigInt(i)) & 1n) {
+      entries.push({ id: i, value: qs[rank] });
+      rank++;
+    }
+  }
+  if (entries.length === 0) {
+    return null;
+  }
+  entries.sort(function(a, b) {
+    return b.value - a.value;
+  });
+  _results = [];
+  for (e in entries) {
+    tile = PAI_BY_ID[entries[e].id];
+    _results.push("  " + alignText(TILE_NAME[tile]) + entries[e].value.toFixed(1).padStart(6));
+  }
+  return _results;
+};
+
+playerName = function(i) {
+  var base, dup, j, n;
+  if (playerInfos[i] && playerInfos[i].name != null) {
+    base = playerInfos[i].name;
+  } else {
+    return "玩家" + (i + 1);
+  }
+  dup = 0;
+  for (j = 0; j < 4; j++) {
+    if (playerInfos[j] && playerInfos[j].name === base) {
+      dup++;
+    }
+  }
+  if (dup > 1) {
+    n = 0;
+    for (j = 0; j <= i; j++) {
+      if (playerInfos[j] && playerInfos[j].name === base) {
+        n++;
+      }
+    }
+    return base + " " + n;
+  }
+  return base;
+};
+
+paiName = function(p) {
+  return TILE_NAME[p] || p;
+};
+
+kyokuResultText = function(k) {
+  var action, d, i, sign, t;
+  for (i = k.actions.length - 1; i >= 0; i--) {
+    action = k.actions[i];
+    if (action.type === "ryukyoku") {
+      return "流局";
+    }
+    if (action.type === "hora") {
+      d = action.deltas[action.actor];
+      sign = d > 0 ? "+" : "";
+      t = action.target === action.actor ? "自摸" : "荣和";
+      return t + " " + playerName(action.actor) + " " + sign + d;
+    }
+  }
+  return "";
+};
+
+finalRankingText = function() {
+  var a, i, j, k, ranks, scores, _i, _j, _k, _len;
+  scores = [25000, 25000, 25000, 25000];
+  for (i = _i = 0; _i < kyokus.length; i = ++_i) {
+    for (j = _j = 0, _len = kyokus[i].actions.length; _j < _len; j = ++_j) {
+      a = kyokus[i].actions[j];
+      if (a.type === "start_kyoku") {
+        for (k = _k = 0; _k < 4; k = ++_k) {
+          scores[k] = a.scores[k];
+        }
+      } else if ((a.type === "hora" || a.type === "ryukyoku") && a.deltas) {
+        for (k = 0; k < 4; k++) {
+          scores[k] += a.deltas[k];
+        }
+      }
+    }
+  }
+  ranks = [0, 1, 2, 3].map(function(k) {
+    return { i: k, s: scores[k] };
+  });
+  ranks.sort(function(x, y) {
+    return y.s - x.s;
+  });
+  return ranks.map(function(r, idx) {
+    return (idx + 1) + "位 " + playerName(r.i) + " " + r.s;
+  });
+};
+
+formatActionText = function(action, nextMeta) {
+  var line, metaNote, v, valList;
+  metaNote = function(meta) {
+    var notes;
+    if (!meta) {
+      return "";
+    }
+    notes = [];
+    if (meta.shanten != null) {
+      notes.push("向听=" + meta.shanten);
+    }
+    if (meta.at_furiten != null) {
+      notes.push(meta.at_furiten ? "振听!" : "非振听");
+    }
+    if (meta.is_greedy != null) {
+      notes.push(meta.is_greedy ? "greedy" : "random");
+    }
+    return notes.length ? " [" + notes.join(" ") + "]" : "";
+  };
+  switch (action.type) {
+    case "start_game":
+      return "游戏开始\n" + action.names.map(function(n, i) {
+        return "  " + i + ". " + n;
+      }).join("\n");
+    case "start_kyoku":
+      return "第" + action.kyoku + "局 " + action.honba + "本场\n庄家: " + playerName(action.oya) + "\n宝牌指示牌: " + paiName(action.dora_marker);
+    case "end_kyoku":
+      return "本局结束";
+    case "end_game":
+      return "游戏结束";
+    case "tsumo":
+      valList = nextMeta ? listDiscardValues(nextMeta) : null;
+      if (valList) {
+        return playerName(action.actor) + " 摸牌: " + paiName(action.pai) + "\n候选出牌 value 排序:\n" + valList.join("\n");
+      }
+      return playerName(action.actor) + " 摸牌: " + paiName(action.pai);
+    case "dahai":
+      line = playerName(action.actor) + " 出牌: " + paiName(action.pai) + (action.tsumogiri ? " (摸切)" : "");
+      v = qValueForActionId(action.meta, paiToId(action.pai));
+      if (v != null) {
+        line += " (" + v.toFixed(1) + ")";
+      }
+      line += metaNote(action.meta);
+      valList = listDiscardValues(action.meta);
+      if (valList) {
+        return line + "\n候选出牌 value 排序:\n" + valList.join("\n");
+      }
+      return line;
+    case "reach":
+      return playerName(action.actor) + " 立直" + metaNote(action.meta);
+    case "reach_accepted":
+      return playerName(action.actor) + " 立直成立";
+    case "chi":
+      return playerName(action.actor) + " 吃 " + paiName(action.pai) + " 用 " + action.consumed.map(paiName).join(",");
+    case "pon":
+      return playerName(action.actor) + " 碰 " + paiName(action.pai) + " 用 " + action.consumed.map(paiName).join(",");
+    case "ankan":
+      return playerName(action.actor) + " 暗杠 " + action.consumed.map(paiName).join(",");
+    case "daiminkan":
+      return playerName(action.actor) + " 大明杠 " + paiName(action.pai) + " 从 " + name(action.target);
+    case "kakan":
+      return playerName(action.actor) + " 加杠 " + paiName(action.pai);
+    case "hora":
+      return playerName(action.actor) + " 和牌! " + (action.target === action.actor ? "自摸" : "荣和, 放铳=" + playerName(action.target)) + " 点差: " + action.deltas.join(",");
+    case "ryukyoku":
+      return "流局";
+    case "dora":
+      return "宝牌追加: " + paiName(action.dora_marker);
+    case "none":
+      return "无操作";
+    default:
+      return action.type;
+  }
+};
+
 parsePai = function(pai) {
   if (pai.match(/^([1-9])(.)(r)?$/)) {
     return {
@@ -389,15 +634,16 @@ renderHo = function(player, offset, pais, view) {
 };
 
 renderAction = function(action) {
-  var dir, displayAction, furo, furoView, ho, i, infoView, j, k, kyoku, laidPos, pais, player, poses, v, view, wanpais, _i, _j, _ref, _ref1, _ref2, _ref3;
-  displayAction = {};
-  for (k in action) {
-    v = action[k];
-    if (k !== "board" && k !== "logs") {
-      displayAction[k] = v;
+  var a, dir, furo, furoView, ho, i, infoView, j, k, kyoku, laidPos, nextMeta, pais, player, poses, view, wanpais, _i, _j, _k, _ref, _ref1, _ref2, _ref3;
+  nextMeta = null;
+  if (action.type === "tsumo") {
+    k = getCurrentKyoku();
+    a = k.actions[currentActionId + 1];
+    if (a && a.type === "dahai" && a.meta && a.meta.q_values) {
+      nextMeta = a.meta;
     }
   }
-  $("#action-label").text(JSON.stringify(displayAction, null, 2));
+  $("#action-label").text(formatActionText(action, nextMeta));
   $("#log-label").text((action.logs && action.logs[currentViewpoint]) || "");
   kyoku = getCurrentKyoku();
   for (i = _i = 0; _i < 4; i = ++_i) {
@@ -481,7 +727,7 @@ goBack = function() {
 };
 
 $(function() {
-  var action, bakazeStr, honba, i, j, kyokuNum, label, playerInfoView, playerView, _i, _j, _k, _l, _len, _ref;
+  var action, bakazeStr, honba, i, j, kyokuNum, kyokuResult, label, playerInfoView, playerView, _i, _j, _k, _l, _len, _ref;
   $(window).bind("mousewheel", function(e) {
     e.preventDefault();
     if (e.originalEvent.wheelDelta < 0) {
@@ -518,15 +764,20 @@ $(function() {
     }
     playerInfoView = Dytem.playerInfos.append();
     playerInfoView.index.text(i);
-    playerInfoView.name.text(playerInfos[i].name);
+    playerInfoView.name.text(playerName(i));
   }
   for (i = _l = 0, _ref = kyokus.length; 0 <= _ref ? _l < _ref : _l > _ref; i = 0 <= _ref ? ++_l : --_l) {
     bakazeStr = BAKAZE_TO_STR[kyokus[i].bakaze];
     honba = kyokus[i].honba;
     kyokuNum = kyokus[i].kyokuNum;
     label = "" + bakazeStr + kyokuNum + "局 " + honba + "本場";
+    kyokuResult = kyokuResultText(kyokus[i]);
+    if (kyokuResult) {
+      label += " (" + kyokuResult + ")";
+    }
     $("#kyokuSelector").get(0).options[i] = new Option(label, i);
   }
+  $("#final-ranking").text(finalRankingText().join("\n"));
   console.log("loaded");
   return renderCurrentAction();
 });

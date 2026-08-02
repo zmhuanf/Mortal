@@ -121,10 +121,14 @@ class TrainPlayer:
         self.top_p = cfg['top_p']
         self.uncertainty_scale = config.get('dqn', {}).get('uncertainty_scale', 0)
 
+        self.temp_max = cfg['temp_max']
+        self.temp_min = cfg['temp_min']
+        self.target_pt = cfg['target_pt']
+
         self.repeats = cfg['repeats']
         self.repeat_counter = 0
 
-    def train_play(self, mortal, dqn, device):
+    def train_play(self, mortal, dqn, device, temperature=None):
         torch.backends.cudnn.benchmark = False
         engine_chal = MortalEngine(
             mortal,
@@ -135,6 +139,7 @@ class TrainPlayer:
             boltzmann_temp = self.boltzmann_temp,
             top_p = self.top_p,
             uncertainty_scale = self.uncertainty_scale,
+            temperature = temperature,
             device = device,
             enable_amp = True,
             name = 'trainee',

@@ -21,6 +21,7 @@ class MortalEngine:
         boltzmann_temp = 1,
         top_p = 1,
         uncertainty_scale = 0,
+        temperature = None,
         action_source = 'q',
     ):
         self.engine_type = 'mortal'
@@ -41,6 +42,7 @@ class MortalEngine:
         self.boltzmann_temp = boltzmann_temp
         self.top_p = top_p
         self.uncertainty_scale = uncertainty_scale
+        self.temperature = temperature
         self.action_source = action_source
 
     def react_batch(self, obs, masks, invisible_obs):
@@ -74,15 +76,19 @@ class MortalEngine:
                 q_mean = q_out.squeeze(1)
                 q_std = torch.zeros_like(q_mean)
             if self.boltzmann_epsilon > 0:
-                logits = (q_mean / self.boltzmann_temp + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
+                logits = (q_mean + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
             else:
                 logits = q_mean.masked_fill(~masks, -torch.inf)
             values = q_mean
 
         if self.boltzmann_epsilon > 0:
-            is_greedy = torch.full((batch_size,), 1-self.boltzmann_epsilon, device=self.device).bernoulli().to(torch.bool)
-            sampled = sample_top_p(logits, self.top_p)
-            actions = torch.where(is_greedy, logits.argmax(-1), sampled)
+            # 用合法动作 logits 的 std 归一化，softmax 锐度不依赖 q 绝对量级
+            if self.temperature is not None and self.temperature > 0:
+                logits_view = logits[masks]
+                logits_std = logits_view.std() if logits_view.numel() > 1 else torch.ones((), device=self.device)
+                logits = logits / (logits_std * self.temperature).clamp_min(1e-6)
+            actions = sample_top_p(logits, self.top_p)
+            is_greedy = torch.full((batch_size,), False, dtype=torch.bool, device=self.device)
         else:
             is_greedy = torch.ones(batch_size, dtype=torch.bool, device=self.device)
             actions = logits.argmax(-1)

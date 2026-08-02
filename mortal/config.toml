@@ -66,14 +66,23 @@ games = 800
 # self-play 对局日志保存目录 (在线训练)
 log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/train_play'
 
-# Boltzmann 探索的 epsilon，表示非贪婪采样的概率 (在线训练)
+# Boltzmann 探索开关，>0 即启用自适应探索（温度退火 + top-p 采样），非概率含义 (在线训练)
 boltzmann_epsilon = 0.005
 
-# Boltzmann 采样温度，越低越接近贪婪 (在线训练)
+# 已废弃，探索温度由下方 temp_max/temp_min 表现驱动退火 (在线训练)
 boltzmann_temp = 0.05
 
-# top-p 采样阈值，1.0 = 不做 top-p 过滤 (在线训练)
-top_p = 1.0
+# top-p 采样阈值，0.9 = 概率累积超出 0.9 的低优动作不采样，1.0 = 不做过滤 (在线训练)
+top_p = 0.9
+
+# 自适应探索温度上限，trainee 表现弱时充分探索 (在线训练)
+temp_max = 3.0
+
+# 自适应探索温度下限，trainee 表现强时接近贪心 (在线训练)
+temp_min = 0.1
+
+# trainee 滑动平均点位达到该值视为成熟，温度降到下限 (在线训练)
+target_pt = 1.0
 
 # 相同 seed 重复对局次数，用于数据增强 (在线训练)
 repeats = 1
@@ -316,8 +325,8 @@ games_per_iter = 4
 # 总轮数 (1v3)
 iters = 1
 
-# 对战日志保存目录 (1v3)
-log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/1v3'
+# 对战日志保存目录 (1v3)，每次运行会在其下新建时间命名的子文件夹
+log_dir = 'D:/Workspace/Mortal/mortal/1v3/log'
 
 [1v3.one]
 # 模型类型：py = 自研模型，akochan = 天凤AI (1v3)

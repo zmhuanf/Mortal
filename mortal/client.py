@@ -48,7 +48,18 @@ def main():
         dqn.load_state_dict(rsp['dqn'])
         logging.info('param has been updated')
 
-        rankings, file_list = train_player.train_play(mortal, dqn, device)
+        # 表现自适应探索温度，trainee 越强温度越低，首轮无历史用上限充分探索
+        if history:
+            sum_rankings = np.sum(history, axis=0)
+            ma_avg_pt = sum_rankings @ pts / sum_rankings.sum()
+            progress = float(np.clip(ma_avg_pt / train_player.target_pt, 0, 1))
+        else:
+            ma_avg_pt = -float('inf')
+            progress = 0.
+        temperature = train_player.temp_max * (train_player.temp_min / train_player.temp_max) ** progress
+        logging.info(f'exploration temperature: {temperature:.4f} (ma_avg_pt={ma_avg_pt:.4f})')
+
+        rankings, file_list = train_player.train_play(mortal, dqn, device, temperature)
         avg_rank = rankings @ np.arange(1, 5) / rankings.sum()
         avg_pt = rankings @ pts / rankings.sum()
 

@@ -1,5 +1,7 @@
 import prelude
 
+from datetime import datetime
+
 import numpy as np
 import torch
 import secrets
@@ -45,7 +47,8 @@ def main():
     games_per_iter = cfg['games_per_iter']
     seeds_per_iter = games_per_iter // 4
     iters = cfg['iters']
-    log_dir = cfg['log_dir']
+    log_dir = os.path.join(cfg['log_dir'], datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.makedirs(log_dir, exist_ok=True)
     one = cfg['one']
     three = cfg['three']
 
