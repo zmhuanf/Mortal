@@ -152,7 +152,7 @@ class TrainPlayer:
             disable_progress_bar = False,
             log_dir = self.log_dir,
         )
-        rankings = env.py_vs_py(
+        rankings, _ = env.py_vs_py(
             challenger = engine_chal,
             champion = self.baseline_engine,
             seed_start = (self.train_seed, self.train_key),

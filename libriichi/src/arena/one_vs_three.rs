@@ -32,7 +32,7 @@ impl OneVsThree {
         }
     }
 
-    /// Returns the rankings of the challenger.
+    /// Returns the rankings of (challenger, champion).
     pub fn py_vs_py(
         &self,
         challenger: PyObject,
@@ -40,7 +40,7 @@ impl OneVsThree {
         seed_start: (u64, u64),
         seed_count: u64,
         py: Python<'_>,
-    ) -> Result<[i32; 4]> {
+    ) -> Result<([i32; 4], [i32; 4])> {
         // `allow_threads` is required, otherwise it will block python GC to
         // run, leading to memory leaks, since this function is doing long
         // tasks.
@@ -51,24 +51,18 @@ impl OneVsThree {
                 seed_start,
                 seed_count,
             )?;
-
-            let mut rankings = [0; 4];
-            for (i, result) in results.iter().enumerate() {
-                let rank = result.rankings().rank_by_player[i % 4];
-                rankings[rank as usize] += 1;
-            }
-            Ok(rankings)
+            Ok(rankings_of_all(&results))
         })
     }
 
-    /// Returns the rankings of the challenger (akochan in this case).
+    /// Returns the rankings of (challenger, champion) where the challenger is akochan.
     pub fn ako_vs_py(
         &self,
         engine: PyObject,
         seed_start: (u64, u64),
         seed_count: u64,
         py: Python<'_>,
-    ) -> Result<[i32; 4]> {
+    ) -> Result<([i32; 4], [i32; 4])> {
         py.allow_threads(move || {
             let results = self.run_batch(
                 |player_ids| AkochanAgent::new_batched(player_ids).map(|a| Box::new(a) as _),
@@ -76,24 +70,18 @@ impl OneVsThree {
                 seed_start,
                 seed_count,
             )?;
-
-            let mut rankings = [0; 4];
-            for (i, result) in results.iter().enumerate() {
-                let rank = result.rankings().rank_by_player[i % 4];
-                rankings[rank as usize] += 1;
-            }
-            Ok(rankings)
+            Ok(rankings_of_all(&results))
         })
     }
 
-    /// Returns the rankings of the challenger (python agent in this case).
+    /// Returns the rankings of (challenger, champion) where the champion is akochan.
     pub fn py_vs_ako(
         &self,
         engine: PyObject,
         seed_start: (u64, u64),
         seed_count: u64,
         py: Python<'_>,
-    ) -> Result<[i32; 4]> {
+    ) -> Result<([i32; 4], [i32; 4])> {
         py.allow_threads(move || {
             let results = self.run_batch(
                 |player_ids| new_py_agent(engine, player_ids),
@@ -101,24 +89,18 @@ impl OneVsThree {
                 seed_start,
                 seed_count,
             )?;
-
-            let mut rankings = [0; 4];
-            for (i, result) in results.iter().enumerate() {
-                let rank = result.rankings().rank_by_player[i % 4];
-                rankings[rank as usize] += 1;
-            }
-            Ok(rankings)
+            Ok(rankings_of_all(&results))
         })
     }
 
-    /// Returns the rankings of the python agents (3 py vs 1 akochan in this case).
+    /// Returns the rankings of (challenger, champion) where the challenger is akochan.
     pub fn py3_vs_ako(
         &self,
         engine: PyObject,
         seed_start: (u64, u64),
         seed_count: u64,
         py: Python<'_>,
-    ) -> Result<[i32; 4]> {
+    ) -> Result<([i32; 4], [i32; 4])> {
         py.allow_threads(move || {
             let results = self.run_batch(
                 |player_ids| AkochanAgent::new_batched(player_ids).map(|a| Box::new(a) as _),
@@ -126,20 +108,26 @@ impl OneVsThree {
                 seed_start,
                 seed_count,
             )?;
-
-            let mut rankings = [0; 4];
-            for (i, result) in results.iter().enumerate() {
-                let chal_seat = i % 4;
-                // 每局统计 py 方（3 座位）的名次
-                for (seat, rank) in result.rankings().rank_by_player.iter().enumerate() {
-                    if seat != chal_seat {
-                        rankings[*rank as usize] += 1;
-                    }
-                }
-            }
-            Ok(rankings)
+            Ok(rankings_of_all(&results))
         })
     }
+}
+
+/// 统计 challenger（单座位）与 champion（三座位）两方的名次分布
+fn rankings_of_all(results: &[GameResult]) -> ([i32; 4], [i32; 4]) {
+    let mut challenger_rankings = [0; 4];
+    let mut champion_rankings = [0; 4];
+    for (i, result) in results.iter().enumerate() {
+        let chal_seat = i % 4;
+        for (seat, rank) in result.rankings().rank_by_player.iter().enumerate() {
+            if seat == chal_seat {
+                challenger_rankings[*rank as usize] += 1;
+            } else {
+                champion_rankings[*rank as usize] += 1;
+            }
+        }
+    }
+    (challenger_rankings, champion_rankings)
 }
 
 impl OneVsThree {

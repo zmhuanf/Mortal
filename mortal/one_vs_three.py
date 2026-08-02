@@ -72,30 +72,31 @@ def main():
         )
         match (three['type'], one['type']):
             case ('py', 'py'):
-                rankings = env.py_vs_py(
-                    challenger=engine_three,
-                    champion=engine_one,
+                one_rankings, three_rankings = env.py_vs_py(
+                    challenger=engine_one,
+                    champion=engine_three,
                     seed_start=(seed, key),
                     seed_count=seeds_per_iter,
                 )
             case ('py', 'akochan'):
-                rankings = env.py3_vs_ako(
+                one_rankings, three_rankings = env.py3_vs_ako(
                     engine=engine_three,
                     seed_start=(seed, key),
                     seed_count=seeds_per_iter,
                 )
             case ('akochan', 'py'):
-                rankings = env.ako_vs_py(
-                    engine=engine_one,
+                one_rankings, three_rankings = env.ako_vs_py(
+                    engine=engine_three,
                     seed_start=(seed, key),
                     seed_count=seeds_per_iter,
                 )
             case _:
                 raise ValueError(f'不支持的组合: three={three["type"]}, one={one["type"]}')
-        rankings = np.array(rankings)
-        avg_rank = rankings @ np.arange(1, 5) / rankings.sum()
-        avg_pt = rankings @ np.array([90, 45, 0, -135]) / rankings.sum()
-        print(f'three rankings: {rankings} ({avg_rank}, {avg_pt}pt)')
+        for name, rankings in [('one', one_rankings), ('three', three_rankings)]:
+            rankings = np.array(rankings)
+            avg_rank = rankings @ np.arange(1, 5) / rankings.sum()
+            avg_pt = rankings @ np.array([90, 45, 0, -135]) / rankings.sum()
+            print(f'{name} rankings: {rankings} ({avg_rank}, {avg_pt}pt)')
 
 
 if __name__ == '__main__':
