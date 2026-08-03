@@ -43,6 +43,12 @@ def train():
     shanten_weight = config['aux'].get('shanten_weight', 0)
     fuuro_weight = config['aux'].get('fuuro_weight', 0)
     riichi_turn_weight = config['aux'].get('riichi_turn_weight', 0)
+    online_human_ratio = config['dataset'].get('online_human_ratio', 0.0)
+    per_cfg = config.get('per', {})
+    per_alpha = per_cfg.get('alpha', 0.0)
+    per_beta = per_cfg.get('beta', 0.0)
+    per_epsilon = per_cfg.get('epsilon', 1e-4)
+    use_per = online and per_alpha > 0
     assert save_every % opt_step_every == 0
     assert test_every % save_every == 0
 
@@ -70,7 +76,6 @@ def train():
     max_grad_norm = config['optim']['max_grad_norm']
 
     dqn_num_heads = config.get('dqn', {}).get('num_heads', 1)
-    dqn_uncertainty_scale = config.get('dqn', {}).get('uncertainty_scale', 0)
 
     mortal = Brain(version=version, **config['resnet']).to(device)
     dqn = DQN(version=version, num_heads=dqn_num_heads).to(device)
@@ -184,10 +189,33 @@ def train():
         nonlocal idx
 
         player_names = []
+        human_file_list = []
         if online:
             player_names = ['trainee']
             dirname = drain()
-            file_list = list(map(lambda p: path.join(dirname, p), os.listdir(dirname)))
+            selfplay_file_list = list(map(lambda p: path.join(dirname, p), os.listdir(dirname)))
+
+            # 混合人类牌谱
+            if online_human_ratio > 0:
+                human_file_index = config['dataset']['file_index']
+                if path.exists(human_file_index):
+                    index = torch.load(human_file_index, weights_only=True)
+                    human_file_list = index['file_list']
+                else:
+                    human_file_list = []
+                    for pat in config['dataset']['globs']:
+                        human_file_list.extend(glob(pat, recursive=True))
+                    human_file_list.sort(reverse=True)
+                    torch.save({'file_list': human_file_list}, human_file_index)
+
+                human_batch_size = max(1, int(batch_size * online_human_ratio))
+                selfplay_batch_size = max(1, batch_size - human_batch_size)
+                logging.info(f'mixed training: {human_batch_size} human + {selfplay_batch_size} self-play per batch')
+            else:
+                human_batch_size = 0
+                selfplay_batch_size = batch_size
+
+            file_list = selfplay_file_list
         else:
             player_names_set = set()
             for filename in config['dataset']['player_names_files']:
@@ -222,25 +250,69 @@ def train():
 
         if num_workers > 1:
             random.shuffle(file_list)
-        file_data = FileDatasetsIter(
-            version = version,
-            file_list = file_list,
-            pts = pts,
-            file_batch_size = file_batch_size,
-            reserve_ratio = reserve_ratio,
-            player_names = player_names,
-            num_epochs = num_epochs,
-            enable_augmentation = enable_augmentation,
-            augmented_first = augmented_first,
-        )
-        data_loader = iter(DataLoader(
-            dataset = file_data,
-            batch_size = batch_size,
-            drop_last = False,
-            num_workers = num_workers,
-            pin_memory = True,
-            worker_init_fn = worker_init_fn,
-        ))
+
+        # 混合数据源：self-play + 人类牌谱
+        if online and online_human_ratio > 0 and len(human_file_list) > 0:
+            selfplay_data = FileDatasetsIter(
+                version = version,
+                file_list = selfplay_file_list,
+                pts = pts,
+                file_batch_size = file_batch_size,
+                reserve_ratio = reserve_ratio,
+                player_names = player_names,
+                num_epochs = num_epochs,
+                enable_augmentation = enable_augmentation,
+                augmented_first = augmented_first,
+            )
+            human_data = FileDatasetsIter(
+                version = version,
+                file_list = human_file_list,
+                pts = pts,
+                file_batch_size = file_batch_size,
+                reserve_ratio = reserve_ratio,
+                num_epochs = num_epochs,
+                enable_augmentation = enable_augmentation,
+                augmented_first = augmented_first,
+            )
+            selfplay_loader = iter(DataLoader(
+                dataset = selfplay_data,
+                batch_size = selfplay_batch_size,
+                drop_last = True,
+                num_workers = num_workers,
+                pin_memory = True,
+                worker_init_fn = worker_init_fn,
+            ))
+            human_loader = iter(DataLoader(
+                dataset = human_data,
+                batch_size = human_batch_size,
+                drop_last = True,
+                num_workers = num_workers,
+                pin_memory = True,
+                worker_init_fn = worker_init_fn,
+            ))
+            # 交错迭代两个 loader
+            data_loader = (tuple(torch.cat([sp, hu], dim=0) for sp, hu in zip(sp_batch, hu_batch))
+                           for sp_batch, hu_batch in zip(selfplay_loader, human_loader))
+        else:
+            file_data = FileDatasetsIter(
+                version = version,
+                file_list = file_list,
+                pts = pts,
+                file_batch_size = file_batch_size,
+                reserve_ratio = reserve_ratio,
+                player_names = player_names,
+                num_epochs = num_epochs,
+                enable_augmentation = enable_augmentation,
+                augmented_first = augmented_first,
+            )
+            data_loader = iter(DataLoader(
+                dataset = file_data,
+                batch_size = batch_size,
+                drop_last = False,
+                num_workers = num_workers,
+                pin_memory = True,
+                worker_init_fn = worker_init_fn,
+            ))
 
         remaining_obs = []
         remaining_actions = []
@@ -281,24 +353,47 @@ def train():
                 q_out = dqn(phi, masks)  # (N, K, A)
                 q = q_out[range(batch_size), :, actions]  # (N, K)
 
-                # 在线/离线统一：IQL 价值回归 + Q 回归 + AWR 策略学习
+                if online:
+                    # 在线 self-play：Double DQN，online net 选动作 target net 估值
+                    with torch.no_grad():
+                        next_phi_online = mortal(next_obs)
+                        next_a = dqn(next_phi_online, next_masks).argmax(-1, keepdim=True)  # (N, K, 1)
+                        next_phi = target_mortal(next_obs)
+                        next_q_target = target_dqn(next_phi, next_masks)  # (N, K, A)
+                        next_q_gathered = next_q_target.gather(-1, next_a).squeeze(-1)  # (N, K)
+                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_q_gathered * (~is_episode_end).unsqueeze(-1)
+
+                    td_error = (q - q_target).abs().mean(-1)  # (N,)
+                    if use_per:
+                        with torch.no_grad():
+                            weights = (td_error + per_epsilon).clamp_min(1e-8) ** per_alpha
+                            weights = weights / weights.mean()
+                            is_weights = weights ** (-per_beta)
+                            is_weights = is_weights / is_weights.mean()
+                        dqn_loss = (is_weights * 0.5 * (q - q_target).pow(2).mean(-1)).mean()
+                    else:
+                        dqn_loss = 0.5 * (q - q_target).pow(2).mean()
+                    v_loss = torch.tensor(0., device=device)
+                else:
+                    # 离线：IQL expectile regression + Q 回归
+                    with torch.no_grad():
+                        next_phi = target_mortal(next_obs)
+                        next_v = target_dqn.value(next_phi)  # (N, K)
+                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_v * (~is_episode_end).unsqueeze(-1)
+
+                    v = dqn.value(phi)  # (N, K)
+                    td = q_target - v
+                    v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
+                    dqn_loss = F.huber_loss(q, q_target, delta=10)
+
+                # AWR 策略学习，在线/离线统一
                 with torch.no_grad():
-                    next_phi = target_mortal(next_obs)
-                    next_v = target_dqn.value(next_phi)  # (N, K)
-                    q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_v * (~is_episode_end).unsqueeze(-1)  # (N, K)
-
-                v = dqn.value(phi)  # (N, K)
-                td = q_target - v
-                v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
-
-                # Q 回归驱动 advantage head，Huber 防异常 td 平方放大
-                dqn_loss = F.huber_loss(q, q_target, delta=10)
-
-                with torch.no_grad():
-                    adv = q_target - v
-                    # 多 head ensemble 先平均 advantage，exp 上界防 fp16 溢出
-                    exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()  # (N,)
-                log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # (N,)
+                    if online:
+                        adv = q_target - q.detach()
+                    else:
+                        adv = q_target - v
+                    exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()
+                log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)
                 policy_loss = -(exp_adv * log_prob).mean()
 
                 next_rank_logits, shanten_logits, fuuro_logits, riichi_turn_logits = aux_net(phi)

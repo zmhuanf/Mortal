@@ -97,6 +97,7 @@ class AuxNet(nn.Module):
         return self.net(x).split(self.dims, dim=-1)
 
 class DQN(nn.Module):
+    """Ensemble Dueling DQN，num_heads 个 head 独立输出 V 和 A"""
     def __init__(self, *, version=1, num_heads=1):
         super().__init__()
         self.version = version

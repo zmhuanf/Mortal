@@ -80,10 +80,6 @@ class FileDatasetsIter(IterableDataset):
     def populate_buffer(self, file_list):
         n_step = config['env'].get('n_step', 3)
         gamma = float(config['env']['gamma'])
-        reward_cfg = config.get('reward', {})
-        riichi_reward = float(reward_cfg.get('riichi', 0.0))
-        agari_reward = float(reward_cfg.get('agari', 0.0))
-        houjuu_reward = float(reward_cfg.get('houjuu', 0.0))
         data = self.loader.load_gz_log_files(file_list)
         for file in data:
             for game in file:
@@ -96,9 +92,6 @@ class FileDatasetsIter(IterableDataset):
                 at_kyoku = game.take_at_kyoku()
                 dones = game.take_dones()
                 apply_gamma = game.take_apply_gamma()
-                is_riichi_turn = np.array(game.take_is_riichi_turn(), dtype=bool)
-                is_agari_turn = np.array(game.take_is_agari_turn(), dtype=bool)
-                is_houjuu_turn = np.array(game.take_is_houjuu_turn(), dtype=bool)
                 shantens = np.array(game.take_shantens(), dtype=np.int64).clip(0, 6)
                 fuuro_counts = np.frombuffer(game.take_fuuro_counts(), dtype=np.uint8).astype(np.int64).clip(0, 6)
                 riichi_turns = np.frombuffer(game.take_riichi_turns(), dtype=np.uint8).astype(np.int64)
@@ -126,17 +119,9 @@ class FileDatasetsIter(IterableDataset):
                     if not dones[i]:
                         steps_to_done[i] = steps_to_done[i + 1] + int(apply_gamma[i])
 
-                # turn-level reward: 叠加到当前步的 n_step_r 上
-                turn_rewards = (
-                    is_riichi_turn * riichi_reward
-                    + is_agari_turn * agari_reward
-                    + is_houjuu_turn * houjuu_reward
-                ).astype(np.float32)
-
                 for i in range(game_size):
                     std = steps_to_done[i]
                     if std < n_step:
-                        # 局在 n 步内结束，reward 折扣回来
                         n_step_r = np.float32(gamma ** std * kyoku_rewards[at_kyoku[i]])
                         is_end = True
                         next_idx = i
@@ -144,8 +129,6 @@ class FileDatasetsIter(IterableDataset):
                         n_step_r = np.float32(0.0)
                         is_end = False
                         next_idx = i + n_step
-
-                    n_step_r += turn_rewards[i]
 
                     entry = [
                         obs[i],

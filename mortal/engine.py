@@ -65,30 +65,35 @@ class MortalEngine:
         phi = self.brain(obs, invisible_obs)
 
         if self.action_source == 'policy':
-            logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)  # (N, A)
+            logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)
+            # ensemble uncertainty 加到 policy logits 上驱动探索
+            if self.uncertainty_scale > 0 and self.num_heads > 1:
+                q_out = self.dqn(phi, masks)  # (N, K, A)
+                q_std = q_out.std(1)  # (N, A)
+                logits = (logits + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
             values = logits
         else:
-            q_out = self.dqn(phi, masks)  # (N, K, A) or (N, A) when K=1
+            q_out = self.dqn(phi, masks)  # (N, K, A)
             if self.num_heads > 1:
                 q_mean = q_out.mean(1)
-                q_std = q_out.std(1)
             else:
                 q_mean = q_out.squeeze(1)
-                q_std = torch.zeros_like(q_mean)
-            if self.boltzmann_epsilon > 0:
-                logits = (q_mean + self.uncertainty_scale * q_std).masked_fill(~masks, -torch.inf)
-            else:
-                logits = q_mean.masked_fill(~masks, -torch.inf)
+            logits = q_mean.masked_fill(~masks, -torch.inf)
             values = q_mean
 
         if self.boltzmann_epsilon > 0:
-            # 用合法动作 logits 的 std 归一化，softmax 锐度不依赖 q 绝对量级
+            # epsilon-greedy：大多数走贪心，少数走温度采样探索
+            is_greedy = torch.full((batch_size,), 1 - self.boltzmann_epsilon, device=self.device).bernoulli().to(torch.bool)
             if self.temperature is not None and self.temperature > 0:
-                logits_view = logits[masks]
-                logits_std = logits_view.std() if logits_view.numel() > 1 else torch.ones((), device=self.device)
-                logits = logits / (logits_std * self.temperature).clamp_min(1e-6)
-            actions = sample_top_p(logits, self.top_p)
-            is_greedy = torch.full((batch_size,), False, dtype=torch.bool, device=self.device)
+                # per-sample std 归一化，softmax 锐度不依赖 q 绝对量级
+                masked = logits.masked_fill(~masks, 0.)
+                cnt = masks.sum(-1).clamp_min(1)
+                mean = masked.sum(-1) / cnt
+                var = ((masked - mean.unsqueeze(-1) * masks) ** 2).sum(-1) / cnt
+                std = var.sqrt().clamp_min(1e-6)
+                logits = logits / (std.unsqueeze(-1) * self.temperature)
+            sampled = sample_top_p(logits, self.top_p)
+            actions = torch.where(is_greedy, logits.argmax(-1), sampled)
         else:
             is_greedy = torch.ones(batch_size, dtype=torch.bool, device=self.device)
             actions = logits.argmax(-1)
