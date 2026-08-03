@@ -22,6 +22,8 @@ copy "%SRC%common.py" "%OUT%" >nul || goto :fail
 copy "%SRC%config.py" "%OUT%" >nul || goto :fail
 copy "%SRC%prelude.py" "%OUT%" >nul || goto :fail
 copy "%SRC%config.toml" "%OUT%" >nul || goto :fail
+copy "%SRC%setup_client.bat" "%OUT%" >nul || goto :fail
+copy "%SRC%_setup_client.py" "%OUT%" >nul || goto :fail
 
 echo Copying compiled extension ...
 copy "%SRC%libriichi.pyd" "%OUT%" >nul || goto :fail
@@ -34,7 +36,7 @@ copy "%SRC%baseline_v1\mortal.pth" "%OUT%\baseline_v1" >nul || goto :fail
 
 echo.
 echo Done. Deploy package is at: %OUT%
-echo Remember to edit conf\online.toml and conf\base.toml on the target machine.
+echo On target machine: run setup_client.bat first, then python client.py
 exit /b 0
 
 :fail
