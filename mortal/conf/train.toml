@@ -33,8 +33,8 @@ enable_augmentation = false
 augmented_first = false
 
 # ============================================================
-# [iql] IQL 离线强化学习参数 (离线训练)
-# 在线训练使用 Double DQN loss，不使用 tau/beta/clip
+# [iql] IQL 离线强化学习参数 (离线训练|在线训练)
+# 在线与离线统一使用 IQL + AWR，tau/beta/clip 均生效
 # ema_decay 在在线和离线均使用
 # ============================================================
 [iql]

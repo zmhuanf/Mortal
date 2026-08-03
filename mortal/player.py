@@ -55,6 +55,7 @@ class TestPlayer:
             device = device,
             enable_amp = True,
             name = 'mortal',
+            action_source = 'policy',
         )
 
         if path.isdir(self.log_dir):
@@ -143,6 +144,7 @@ class TrainPlayer:
             device = device,
             enable_amp = True,
             name = 'trainee',
+            action_source = 'policy',
         )
 
         if path.isdir(self.log_dir):

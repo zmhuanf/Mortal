@@ -275,39 +275,25 @@ def train():
                 q_out = dqn(phi, masks)  # (N, K, A)
                 q = q_out[range(batch_size), :, actions]  # (N, K)
 
-                if online:
-                    with torch.no_grad():
-                        # 每个 head 独立选动作，用对应 target head 估值
-                        next_phi_online = mortal(next_obs)
-                        next_q_online = dqn(next_phi_online, next_masks)  # (N, K, A)
-                        next_a = next_q_online.argmax(-1, keepdim=True)  # (N, K, 1)
-                        next_phi = target_mortal(next_obs)
-                        next_q_target = target_dqn(next_phi, next_masks)  # (N, K, A)
-                        next_q_gathered = next_q_target.gather(-1, next_a).squeeze(-1)  # (N, K)
-                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_q_gathered * (~is_episode_end).unsqueeze(-1)  # (N, K)
+                # 在线/离线统一：IQL 价值回归 + Q 回归 + AWR 策略学习
+                with torch.no_grad():
+                    next_phi = target_mortal(next_obs)
+                    next_v = target_dqn.value(next_phi)  # (N, K)
+                    q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_v * (~is_episode_end).unsqueeze(-1)  # (N, K)
 
-                    dqn_loss = 0.5 * (q - q_target).pow(2).mean()
-                    v_loss = torch.tensor(0., device=device)
-                    policy_loss = torch.tensor(0., device=device)
-                else:
-                    with torch.no_grad():
-                        next_phi = target_mortal(next_obs)
-                        next_v = target_dqn.value(next_phi)  # (N, K)
-                        q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_v * (~is_episode_end).unsqueeze(-1)  # (N, K)
+                v = dqn.value(phi)  # (N, K)
+                td = q_target - v
+                v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
 
-                    v = dqn.value(phi)  # (N, K)
-                    td = q_target - v
-                    v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
+                # Q 回归驱动 advantage head，Huber 防异常 td 平方放大
+                dqn_loss = F.huber_loss(q, q_target, delta=10)
 
-                    # Q 回归驱动 advantage head，Huber 防异常 td 平方放大
-                    dqn_loss = F.huber_loss(q, q_target, delta=10)
-
-                    with torch.no_grad():
-                        adv = q_target - v
-                        # 多 head ensemble 先平均 advantage，exp 上界防 fp16 溢出
-                        exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()  # (N,)
-                    log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # (N,)
-                    policy_loss = -(exp_adv * log_prob).mean()
+                with torch.no_grad():
+                    adv = q_target - v
+                    # 多 head ensemble 先平均 advantage，exp 上界防 fp16 溢出
+                    exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()  # (N,)
+                log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)  # (N,)
+                policy_loss = -(exp_adv * log_prob).mean()
 
                 next_rank_logits, shanten_logits, fuuro_logits, riichi_turn_logits = aux_net(phi)
                 next_rank_loss = ce(next_rank_logits, player_ranks)
