@@ -88,7 +88,7 @@ beta_end = 1.0
 beta_anneal_steps = 100000
 
 # buffer 容量，超出后旧 transition 被淘汰 (在线训练)
-capacity = 8192
+capacity = 16384
 
 # 预热最小容量，buffer 积累到该值后才开始采样训练 (在线训练)
 min_size = 4096

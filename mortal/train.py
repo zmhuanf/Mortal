@@ -381,7 +381,7 @@ def train():
                         next_q_gathered = next_q_target.gather(-1, next_a).squeeze(-1)  # (N, K)
                         q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_q_gathered * (~is_episode_end).unsqueeze(-1)
 
-                    td_error = (q - q_target).abs().mean(-1)  # (N,)
+                    td_error = (q.detach().float() - q_target.float()).abs().mean(-1)  # (N,)
                     per_batch_loss = 0.5 * (q - q_target).pow(2).mean(-1)  # (N,)
                     if is_weights is not None:
                         dqn_loss = (is_weights.to(device) * per_batch_loss).mean()
