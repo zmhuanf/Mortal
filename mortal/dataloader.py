@@ -119,6 +119,9 @@ class FileDatasetsIter(IterableDataset):
                     if not dones[i]:
                         steps_to_done[i] = steps_to_done[i + 1] + int(apply_gamma[i])
 
+                # apply_gamma 前缀和，按折扣步数定位 next_idx 而非 transition 偏移
+                gamma_prefix = np.concatenate(([0], np.cumsum(np.asarray(apply_gamma, dtype=np.int64))))
+
                 for i in range(game_size):
                     std = steps_to_done[i]
                     if std < n_step:
@@ -128,7 +131,9 @@ class FileDatasetsIter(IterableDataset):
                     else:
                         n_step_r = np.float32(0.0)
                         is_end = False
-                        next_idx = i + n_step
+                        # 从 i 起第 n_step 个 apply_gamma 步之后的 transition
+                        next_idx = int(np.searchsorted(gamma_prefix, gamma_prefix[i] + n_step, side='left'))
+                        next_idx = min(next_idx, game_size - 1)
 
                     entry = [
                         obs[i],

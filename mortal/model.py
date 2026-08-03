@@ -180,11 +180,12 @@ class GRP(nn.Module):
         x = x[torch.arange(x.shape[0]), idx]
         return self.fc(x)
 
-    # (N, 16) -> (N, player, rank_prob), Sinkhorn 归一化为双随机矩阵
+    # (N, 16) -> (N, player, rank_prob), Sinkhorn 迭代归一化为双随机矩阵
     def calc_matrix(self, logits: Tensor):
         matrix = logits.reshape(-1, 4, 4).softmax(-1)
-        matrix = matrix / matrix.sum(-1, keepdim=True)  # 行归一化
-        matrix = matrix / matrix.sum(-2, keepdim=True)  # 列归一化
+        for _ in range(5):
+            matrix = matrix / matrix.sum(-1, keepdim=True)
+            matrix = matrix / matrix.sum(-2, keepdim=True)
         return matrix
 
     # (N, 4) -> (N, 4, 4) one-hot, label[player, rank] = 1
