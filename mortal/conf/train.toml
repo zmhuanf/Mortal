@@ -106,10 +106,10 @@ max_grad_norm = 1.0
 peak = 1.5e-4
 
 # cosine 退火结束时的最终学习率 (baseline训练|离线训练|在线训练)
-final = 3e-5
+final = 1.5e-4
 
 # warmup 步数，0 = 不做 warmup (baseline训练|离线训练|在线训练)
 warm_up_steps = 5000
 
 # cosine 周期总步数，0 = 不做退火 (baseline训练|离线训练|在线训练)
-max_steps = 5000000
+max_steps = 5000

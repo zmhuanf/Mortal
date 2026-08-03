@@ -57,6 +57,8 @@ class Handler(BaseRequestHandler):
             # opponent pool
             case 'get_pool':
                 self.handle_get_pool()
+            case 'get_opponent':
+                self.handle_get_opponent(msg)
             case 'promote':
                 self.handle_promote(msg)
 
@@ -136,6 +138,17 @@ class Handler(BaseRequestHandler):
                 'version': S.pool_version,
                 'opponents': S.pool_opponents,
             })
+
+    def handle_get_opponent(self, msg):
+        # client 与 server 跨机时本地无权重文件，需按 id 传输对手权重原始字节
+        with S.pool_lock:
+            state_file = S.pool_opponents[msg['id']]['state_file']
+        with open(state_file, 'rb') as f:
+            weights = f.read()
+        self.send_msg({
+            'status': 'ok',
+            'weights': weights,
+        })
 
     def handle_promote(self, msg):
         with S.pool_lock:

@@ -57,6 +57,14 @@ def get_pool():
         send_msg(conn, {'type': 'get_pool'})
         return recv_msg(conn)
 
+def get_opponent(op_id):
+    # 跨机 client 无 server 端权重文件，按 id 拉取对手权重原始字节
+    remote = (config['online']['remote']['host'], config['online']['remote']['port'])
+    with socket.socket() as conn:
+        conn.connect(remote)
+        send_msg(conn, {'type': 'get_opponent', 'id': op_id})
+        return recv_msg(conn)
+
 def promote(mortal, dqn, meta=None):
     remote = (config['online']['remote']['host'], config['online']['remote']['port'])
     with socket.socket() as conn:

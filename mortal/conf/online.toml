@@ -21,7 +21,7 @@ boltzmann_temp = 0.05
 top_p = 0.9
 
 # 自适应探索温度上限，trainee 表现弱时充分探索 (在线训练)
-temp_max = 1
+temp_max = 0.5
 
 # 自适应探索温度下限，trainee 表现强时接近贪心 (在线训练)
 temp_min = 0.1
@@ -45,7 +45,7 @@ enable_compile = false
 
 [online.remote]
 # server 监听地址 (在线训练)
-host = '127.0.0.1'
+host = '192.168.1.239'
 
 # server 监听端口 (在线训练)
 port = 5000

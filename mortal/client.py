@@ -6,10 +6,11 @@ import torch
 import numpy as np
 import time
 import gc
+from io import BytesIO
 from os import path
 from model import Brain, DQN
 from player import TrainPlayer
-from common import send_msg, recv_msg, get_pool, promote
+from common import send_msg, recv_msg, get_pool, get_opponent, promote
 from config import config
 
 def main():
@@ -58,7 +59,10 @@ def main():
         pool = get_pool()
         current_opponent = pool['opponents'][-1]
         if current_opponent['state_file'] != champion_file:
-            train_player.load_champion(current_opponent['state_file'], current_opponent['name'])
+            # 跨机时本地无权重文件，从 server 拉取对手权重
+            rsp = get_opponent(current_opponent['id'])
+            state = torch.load(BytesIO(rsp['weights']), weights_only=True, map_location=device)
+            train_player.load_champion_state(state, current_opponent['name'])
             champion_file = current_opponent['state_file']
 
         # 表现自适应探索温度，trainee 越强温度越低，首轮无历史用上限充分探索

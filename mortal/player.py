@@ -13,6 +13,9 @@ from config import config
 
 def load_opponent_engine(state_file, device, enable_compile, name):
     state = torch.load(state_file, weights_only=True, map_location=torch.device('cpu'))
+    return build_opponent_engine(state, device, enable_compile, name)
+
+def build_opponent_engine(state, device, enable_compile, name):
     cfg = state['config']
     version = cfg['control'].get('version', 4)
     resnet_cfg = cfg['resnet']
@@ -155,6 +158,10 @@ class TrainPlayer:
 
     def load_champion(self, state_file, name):
         self.champion_engine = load_opponent_engine(state_file, self.champion_device, self.champion_compile, name)
+        logging.info(f'champion switched to {name}')
+
+    def load_champion_state(self, state, name):
+        self.champion_engine = build_opponent_engine(state, self.champion_device, self.champion_compile, name)
         logging.info(f'champion switched to {name}')
 
     def train_play(self, mortal, dqn, device, temperature=None):

@@ -158,7 +158,7 @@ class GRP(nn.Module):
             activation='gelu',
             batch_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         self.fc = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(inplace=True),
