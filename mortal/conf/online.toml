@@ -21,7 +21,7 @@ boltzmann_temp = 0.05
 top_p = 0.9
 
 # 自适应探索温度上限，trainee 表现弱时充分探索 (在线训练)
-temp_max = 3.0
+temp_max = 1
 
 # 自适应探索温度下限，trainee 表现强时接近贪心 (在线训练)
 temp_min = 0.1
@@ -76,7 +76,7 @@ device = 'cuda:0'
 enable_compile = false
 
 # baseline checkpoint 路径，TrainPlayer 加载作为 self-play 对手 (在线训练)
-state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth'
 
 [baseline.test]
 # baseline 推理设备 (离线训练|在线训练)
@@ -86,4 +86,4 @@ device = 'cuda:0'
 enable_compile = false
 
 # baseline checkpoint 路径，TestPlayer 加载作为 test_play 对手 (离线训练|在线训练)
-state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/baseline.pth'
+state_file = 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth'

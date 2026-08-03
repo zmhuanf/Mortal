@@ -18,7 +18,7 @@ file_batch_size = 15
 reserve_ratio = 0.0
 
 # DataLoader 工作进程数 (baseline训练|离线训练)
-num_workers = 6
+num_workers = 2
 
 # 只加载包含这些玩家名的牌谱，空列表 = 加载全部 (baseline训练|离线训练)
 player_names_files = []
@@ -73,13 +73,13 @@ riichi_turn_weight = 0.05
 # ============================================================
 [reward]
 # 立直步的额外 reward (baseline训练|离线训练|在线训练)
-riichi = 0.1
+riichi = 0.15
 
 # 和牌步的额外 reward (baseline训练|离线训练|在线训练)
-agari = 0.3
+agari = 0.5
 
 # 放炮步的额外 reward (负值) (baseline训练|离线训练|在线训练)
-houjuu = -0.3
+houjuu = -0.15
 
 # ============================================================
 # [optim] 优化器参数 (baseline训练|离线训练|在线训练)
@@ -112,4 +112,4 @@ final = 3e-5
 warm_up_steps = 5000
 
 # cosine 周期总步数，0 = 不做退火 (baseline训练|离线训练|在线训练)
-max_steps = 230000
+max_steps = 5000000

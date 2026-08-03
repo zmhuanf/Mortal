@@ -6,7 +6,7 @@
 # ============================================================
 [test_play]
 # 每次评估的对局总数，实际 seed 数 = games // 4 (离线训练|在线训练)
-games = 3000
+games = 1000
 
 # 评估对局日志保存目录 (离线训练|在线训练)
 log_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/test_play'
@@ -34,7 +34,7 @@ log_dir = 'D:/Workspace/Mortal/mortal/1v3/log'
 type = 'py'
 
 # 显示名称 (1v3)
-name = 'baseline_v1'
+name = 'baseline_v3'
 
 # akochan 安装目录，type=akochan 时使用 (1v3)
 dir = 'D:/Workspace/Mortal/akochan'
@@ -46,7 +46,7 @@ tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
 device = 'cuda:0'
 
 # py checkpoint 路径，type=py 时使用 (1v3)
-state_file = 'D:/Workspace/Mortal/mortal/1v3/baseline_v1.pth'
+state_file = 'D:/Workspace/Mortal/mortal/1v3/baseline_v3.pth'
 
 # 是否编译 py 模型，type=py 时使用 (1v3)
 enable_compile = false
