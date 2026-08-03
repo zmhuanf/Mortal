@@ -64,6 +64,23 @@ capacity = 1600
 force_sequential = false
 
 # ============================================================
+# [online.pool] 对手池打怪升级机制配置 (在线训练)
+# server 维护对手池，client 稳定打赢当前对手后把权重存档入池并换更强对手
+# ============================================================
+[online.pool]
+# 对手池存档目录，含 index.json 与各对手权重文件 (在线训练)
+opponents_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/opponents'
+
+# 晋级阈值，滑动窗口平均名次优于该值视为打赢当前对手（1v3 中 2.5 = 持平）(在线训练)
+promote_avg_rank = 2.4
+
+# 晋级判定所需最小有效轮数，防样本不足抖动 (在线训练)
+promote_min_sessions = 10
+
+# 晋级后冷却轮数，防连续抖动晋级 (在线训练)
+promote_cooldown = 20
+
+# ============================================================
 # [baseline] baseline 模型 checkpoint 配置
 # test = test_play 对战对手 (离线训练|在线训练)
 # train = 在线 self-play 对战对手 (在线训练)

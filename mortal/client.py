@@ -9,7 +9,7 @@ import gc
 from os import path
 from model import Brain, DQN
 from player import TrainPlayer
-from common import send_msg, recv_msg
+from common import send_msg, recv_msg, get_pool, promote
 from config import config
 
 def main():
@@ -30,6 +30,13 @@ def main():
     history_window = config['online']['history_window']
     history = []
 
+    pool_cfg = config['online']['pool']
+    promote_avg_rank = pool_cfg['promote_avg_rank']
+    promote_min_sessions = pool_cfg['promote_min_sessions']
+    promote_cooldown = pool_cfg['promote_cooldown']
+    champion_file = None
+    cooldown_left = 0
+
     while True:
         while True:
             with socket.socket() as conn:
@@ -47,6 +54,12 @@ def main():
         mortal.load_state_dict(rsp['mortal'])
         dqn.load_state_dict(rsp['dqn'])
         logging.info('param has been updated')
+
+        pool = get_pool()
+        current_opponent = pool['opponents'][-1]
+        if current_opponent['state_file'] != champion_file:
+            train_player.load_champion(current_opponent['state_file'], current_opponent['name'])
+            champion_file = current_opponent['state_file']
 
         # 表现自适应探索温度，trainee 越强温度越低，首轮无历史用上限充分探索
         if history:
@@ -72,6 +85,21 @@ def main():
 
         logging.info(f'trainee rankings: {rankings} ({avg_rank:.6}, {avg_pt:.6}pt)')
         logging.info(f'last {len(history)} sessions: {sum_rankings} ({ma_avg_rank:.6}, {ma_avg_pt:.6}pt)')
+
+        cooldown_left = max(0, cooldown_left - 1)
+        if len(history) >= promote_min_sessions and cooldown_left == 0 and ma_avg_rank < promote_avg_rank:
+            rsp = promote(mortal, dqn, {
+                'avg_rank': float(ma_avg_rank),
+                'avg_pt': float(ma_avg_pt),
+                'sessions': len(history),
+            })
+            logging.info(
+                f'promoted to opponent pool v{rsp["version"]}: {rsp["current"]["name"]} '
+                f'(ma_avg_rank={ma_avg_rank:.6}, ma_avg_pt={ma_avg_pt:.6}pt)'
+            )
+            history.clear()
+            cooldown_left = promote_cooldown
+            champion_file = None
 
         logs = {}
         for filename in file_list:

@@ -21,7 +21,7 @@ def train():
     from torch.nn.utils import clip_grad_norm_
     from torch.utils.data import DataLoader
     from torch.utils.tensorboard import SummaryWriter
-    from common import submit_param, parameter_count, drain, filtered_trimmed_lines, tqdm
+    from common import submit_param, parameter_count, drain, filtered_trimmed_lines, tqdm, get_pool
     from player import TestPlayer
     from dataloader import FileDatasetsIter, worker_init_fn
     from lr_scheduler import LinearWarmUpCosineAnnealingLR
@@ -141,6 +141,7 @@ def train():
         scaler.load_state_dict(state['scaler'])
         best_perf = state['best_perf']
         steps = state['steps']
+    last_pool_version = state.get('pool_version', -1) if path.exists(state_file) else -1
 
     optimizer.zero_grad(set_to_none=True)
     ce = nn.CrossEntropyLoss()
@@ -256,6 +257,8 @@ def train():
             nonlocal steps
             nonlocal idx
             nonlocal pb
+            nonlocal best_perf
+            nonlocal last_pool_version
 
             obs = obs.to(dtype=torch.float32, device=device)
             actions = actions.to(dtype=torch.int64, device=device)
@@ -376,6 +379,7 @@ def train():
                     'steps': steps,
                     'timestamp': datetime.now().timestamp(),
                     'best_perf': best_perf,
+                    'pool_version': last_pool_version,
                     'config': config,
                 }
                 torch.save(state, state_file)
@@ -385,21 +389,42 @@ def train():
                     logging.info('param has been submitted')
 
                 if not is_baseline and steps % test_every == 0:
-                    stat = test_player.test_play(test_games // 4, mortal, dqn, device)
+                    pool = get_pool()
+                    if pool['version'] != last_pool_version:
+                        best_perf = {'avg_rank': 4., 'avg_pt': -135.}
+                        last_pool_version = pool['version']
+                        logging.info(f'opponent pool upgraded to v{pool["version"]}, best_perf reset')
+                    state['pool_version'] = last_pool_version
+
+                    results = test_player.test_all(pool['opponents'], test_games, mortal, dqn, device)
                     mortal.train()
                     dqn.train()
 
-                    avg_pt = stat.avg_pt([90, 45, 0, -135]) # for display only, never used in training
-                    better = avg_pt >= best_perf['avg_pt'] and stat.avg_rank <= best_perf['avg_rank']
+                    totals = [0, 0, 0, 0]
+                    for _, rankings, _ in results:
+                        for k in range(4):
+                            totals[k] += rankings[k]
+                    total = sum(totals)
+                    avg_rank = sum((i + 1) * c for i, c in enumerate(totals)) / total
+                    avg_pt = sum(p * c for p, c in zip([90, 45, 0, -135], totals)) / total
+
+                    better = avg_pt >= best_perf['avg_pt'] and avg_rank <= best_perf['avg_rank']
                     if better:
                         past_best = best_perf.copy()
                         best_perf['avg_pt'] = avg_pt
-                        best_perf['avg_rank'] = stat.avg_rank
+                        best_perf['avg_rank'] = avg_rank
 
-                    logging.info(f'avg rank: {stat.avg_rank:.6}')
+                    logging.info(f'avg rank: {avg_rank:.6} (pool v{pool["version"]}, {len(results)} opponents)')
                     logging.info(f'avg pt: {avg_pt:.6}')
-                    writer.add_scalar('test_play/avg_ranking', stat.avg_rank, steps)
+                    writer.add_scalar('test_play/avg_ranking', avg_rank, steps)
                     writer.add_scalar('test_play/avg_pt', avg_pt, steps)
+                    for op, rankings, _ in results:
+                        op_total = sum(rankings)
+                        op_avg_rank = sum((i + 1) * c for i, c in enumerate(rankings)) / max(1, op_total)
+                        logging.info(f'  vs {op["name"]}: {rankings} ({op_avg_rank:.6})')
+                        writer.add_scalar(f'test_play/pool/{op["name"]}/avg_ranking', op_avg_rank, steps)
+
+                    stat = results[-1][2]
                     writer.add_scalars('test_play/ranking', {
                         '1st': stat.rank_1_rate,
                         '2nd': stat.rank_2_rate,

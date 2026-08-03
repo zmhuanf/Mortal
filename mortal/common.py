@@ -50,6 +50,25 @@ def submit_param(mortal, dqn, is_idle=False):
             'is_idle': is_idle,
         })
 
+def get_pool():
+    remote = (config['online']['remote']['host'], config['online']['remote']['port'])
+    with socket.socket() as conn:
+        conn.connect(remote)
+        send_msg(conn, {'type': 'get_pool'})
+        return recv_msg(conn)
+
+def promote(mortal, dqn, meta=None):
+    remote = (config['online']['remote']['host'], config['online']['remote']['port'])
+    with socket.socket() as conn:
+        conn.connect(remote)
+        send_msg(conn, {
+            'type': 'promote',
+            'mortal': {k: v.cpu() for k, v in mortal.state_dict().items()},
+            'dqn': {k: v.cpu() for k, v in dqn.state_dict().items()},
+            'meta': meta,
+        })
+        return recv_msg(conn)
+
 def send_msg(conn: socket.socket, msg, packed=False):
     if packed:
         tx = msg

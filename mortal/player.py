@@ -11,39 +11,86 @@ from libriichi.stat import Stat
 from libriichi.arena import OneVsThree
 from config import config
 
+def load_opponent_engine(state_file, device, enable_compile, name):
+    state = torch.load(state_file, weights_only=True, map_location=torch.device('cpu'))
+    cfg = state['config']
+    version = cfg['control'].get('version', 4)
+    resnet_cfg = cfg['resnet']
+    dqn_cfg = cfg.get('dqn', {})
+    num_heads = dqn_cfg.get('num_heads', 1)
+    stable_mortal = Brain(version=version, **resnet_cfg).eval()
+    stable_dqn = DQN(version=version, num_heads=num_heads).eval()
+    # 旧 checkpoint 无 policy_head，strict=False 兼容并退回 q 选动作
+    stable_mortal.load_state_dict(state['mortal'], strict=False)
+    stable_dqn.load_state_dict(state['current_dqn'])
+    if enable_compile:
+        stable_mortal.compile()
+        stable_dqn.compile()
+    return MortalEngine(
+        stable_mortal,
+        stable_dqn,
+        is_oracle = False,
+        version = version,
+        device = torch.device(device),
+        enable_amp = True,
+        enable_rule_based_agari_guard = True,
+        name = name,
+        action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
+    )
+
 class TestPlayer:
     def __init__(self):
         baseline_cfg = config['baseline']['test']
-        device = torch.device(baseline_cfg['device'])
-
-        state = torch.load(baseline_cfg['state_file'], weights_only=True, map_location=torch.device('cpu'))
-        cfg = state['config']
-        version = cfg['control'].get('version', 4)
-        resnet_cfg = cfg['resnet']
-        dqn_cfg = cfg.get('dqn', {})
-        num_heads = dqn_cfg.get('num_heads', 1)
-        stable_mortal = Brain(version=version, **resnet_cfg).eval()
-        stable_dqn = DQN(version=version, num_heads=num_heads).eval()
-        # 旧 checkpoint 无 policy_head，strict=False 兼容并退回 q 选动作
-        stable_mortal.load_state_dict(state['mortal'], strict=False)
-        stable_dqn.load_state_dict(state['current_dqn'])
-        if baseline_cfg['enable_compile']:
-            stable_mortal.compile()
-            stable_dqn.compile()
-
-        self.baseline_engine = MortalEngine(
-            stable_mortal,
-            stable_dqn,
-            is_oracle = False,
-            version = version,
-            device = device,
-            enable_amp = True,
-            enable_rule_based_agari_guard = True,
-            name = 'baseline',
-            action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
-        )
+        self.device = torch.device(baseline_cfg['device'])
+        self.enable_compile = baseline_cfg['enable_compile']
+        baseline_file = path.abspath(baseline_cfg['state_file'])
+        self.baseline_engine = load_opponent_engine(baseline_file, baseline_cfg['device'], self.enable_compile, 'baseline')
+        self._engine_cache = {baseline_file: self.baseline_engine}
         self.chal_version = config['control']['version']
         self.log_dir = path.abspath(config['test_play']['log_dir'])
+
+    def _engine_for(self, op):
+        state_file = op['state_file']
+        if state_file not in self._engine_cache:
+            self._engine_cache[state_file] = load_opponent_engine(state_file, self.device, self.enable_compile, op['name'])
+        return self._engine_cache[state_file]
+
+    def test_all(self, opponents, games, mortal, dqn, device):
+        torch.backends.cudnn.benchmark = False
+        engine_chal = MortalEngine(
+            mortal,
+            dqn,
+            is_oracle = False,
+            version = self.chal_version,
+            device = device,
+            enable_amp = True,
+            name = 'mortal',
+            action_source = 'policy',
+        )
+
+        if path.isdir(self.log_dir):
+            shutil.rmtree(self.log_dir)
+
+        seed_count = games // 4
+        per_opp = max(1, seed_count // len(opponents))
+        results = []
+        for i, op in enumerate(opponents):
+            sub_dir = path.join(self.log_dir, f'op_{i:02d}')
+            env = OneVsThree(
+                disable_progress_bar = False,
+                log_dir = sub_dir,
+            )
+            rankings, _ = env.py_vs_py(
+                challenger = engine_chal,
+                champion = self._engine_for(op),
+                seed_start = (10000 + i * per_opp, 0x2000),
+                seed_count = per_opp,
+            )
+            stat = Stat.from_dir(sub_dir, 'mortal')
+            results.append((op, rankings, stat))
+
+        torch.backends.cudnn.benchmark = config['control']['enable_cudnn_benchmark']
+        return results
 
     def test_play(self, seed_count, mortal, dqn, device):
         torch.backends.cudnn.benchmark = False
@@ -79,34 +126,11 @@ class TestPlayer:
 class TrainPlayer:
     def __init__(self):
         baseline_cfg = config['baseline']['train']
-        device = torch.device(baseline_cfg['device'])
-
-        state = torch.load(baseline_cfg['state_file'], weights_only=True, map_location=torch.device('cpu'))
-        cfg = state['config']
-        version = cfg['control'].get('version', 4)
-        resnet_cfg = cfg['resnet']
-        dqn_cfg = cfg.get('dqn', {})
-        num_heads = dqn_cfg.get('num_heads', 1)
-        stable_mortal = Brain(version=version, **resnet_cfg).eval()
-        stable_dqn = DQN(version=version, num_heads=num_heads).eval()
-        # 旧 checkpoint 无 policy_head，strict=False 兼容并退回 q 选动作
-        stable_mortal.load_state_dict(state['mortal'], strict=False)
-        stable_dqn.load_state_dict(state['current_dqn'])
-        if baseline_cfg['enable_compile']:
-            stable_mortal.compile()
-            stable_dqn.compile()
-
-        self.baseline_engine = MortalEngine(
-            stable_mortal,
-            stable_dqn,
-            is_oracle = False,
-            version = version,
-            device = device,
-            enable_amp = True,
-            enable_rule_based_agari_guard = True,
-            name = 'baseline',
-            action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
-        )
+        self.champion_device = torch.device(baseline_cfg['device'])
+        self.champion_compile = baseline_cfg['enable_compile']
+        baseline_file = path.abspath(baseline_cfg['state_file'])
+        self.baseline_engine = load_opponent_engine(baseline_file, baseline_cfg['device'], self.champion_compile, 'baseline')
+        self.champion_engine = self.baseline_engine
 
         profile = os.environ.get('TRAIN_PLAY_PROFILE', 'default')
         logging.info(f'using profile {profile}')
@@ -128,6 +152,10 @@ class TrainPlayer:
 
         self.repeats = cfg['repeats']
         self.repeat_counter = 0
+
+    def load_champion(self, state_file, name):
+        self.champion_engine = load_opponent_engine(state_file, self.champion_device, self.champion_compile, name)
+        logging.info(f'champion switched to {name}')
 
     def train_play(self, mortal, dqn, device, temperature=None):
         torch.backends.cudnn.benchmark = False
@@ -156,7 +184,7 @@ class TrainPlayer:
         )
         rankings, _ = env.py_vs_py(
             challenger = engine_chal,
-            champion = self.baseline_engine,
+            champion = self.champion_engine,
             seed_start = (self.train_seed, self.train_key),
             seed_count = self.seed_count,
         )

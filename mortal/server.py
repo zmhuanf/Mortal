@@ -5,11 +5,13 @@ import shutil
 import torch
 import sys
 import os
+import json
 from os import path
 from io import BytesIO
 from typing import *
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime
 from socketserver import ThreadingTCPServer, BaseRequestHandler
 from threading import Lock
 from common import send_msg, recv_msg, UnexpectedEOF
@@ -21,8 +23,10 @@ class State:
     drain_dir: str
     capacity: int
     force_sequential: bool
+    opponents_dir: str
     dir_lock: Lock
     param_lock: Lock
+    pool_lock: Lock
     # fields below are protected by dir_lock
     buffer_size: int
     submission_id: int
@@ -31,6 +35,9 @@ class State:
     dqn_param: Optional[OrderedDict]
     param_version: int
     idle_param_version: int
+    # fields below are protected by pool_lock
+    pool_opponents: List[dict]
+    pool_version: int
 S = None
 
 class Handler(BaseRequestHandler):
@@ -47,6 +54,11 @@ class Handler(BaseRequestHandler):
                 self.handle_submit_param(msg)
             case 'drain':
                 self.handle_drain()
+            # opponent pool
+            case 'get_pool':
+                self.handle_get_pool()
+            case 'promote':
+                self.handle_promote(msg)
 
     def handle_get_param(self, msg):
         with S.dir_lock:
@@ -117,11 +129,60 @@ class Handler(BaseRequestHandler):
             'drain_dir': S.drain_dir,
         })
 
+    def handle_get_pool(self):
+        with S.pool_lock:
+            self.send_msg({
+                'status': 'ok',
+                'version': S.pool_version,
+                'opponents': S.pool_opponents,
+            })
+
+    def handle_promote(self, msg):
+        with S.pool_lock:
+            op_id = len(S.pool_opponents)
+            name = f'op_{op_id:04d}'
+            state_file = path.join(S.opponents_dir, f'{op_id:04d}_{name}.pth')
+            torch.save({
+                'mortal': msg['mortal'],
+                'current_dqn': msg['dqn'],
+                'config': config,
+                'timestamp': datetime.now().timestamp(),
+                'meta': msg.get('meta') or {},
+            }, state_file)
+            S.pool_opponents.append({
+                'id': op_id,
+                'name': name,
+                'state_file': state_file,
+                'meta': msg.get('meta') or {},
+            })
+            S.pool_version += 1
+            write_index()
+            meta = S.pool_opponents[-1]['meta']
+            logging.info(
+                f'opponent promoted: {name} (avg_rank={meta.get("avg_rank")}, '
+                f'avg_pt={meta.get("avg_pt")}), pool_version={S.pool_version}'
+            )
+            self.send_msg({
+                'status': 'ok',
+                'version': S.pool_version,
+                'current': S.pool_opponents[-1],
+            })
+
     def send_msg(self, msg, packed=False):
         return send_msg(self.request, msg, packed)
 
     def recv_msg(self):
         return recv_msg(self.request)
+
+def write_index():
+    index_file = path.join(S.opponents_dir, 'index.json')
+    tmp_file = index_file + '.tmp'
+    with open(tmp_file, 'w', encoding='utf-8') as f:
+        json.dump(
+            {'version': S.pool_version, 'opponents': S.pool_opponents},
+            f, ensure_ascii=False, indent=2, default=float,
+        )
+    os.replace(tmp_file, index_file)
 
 class Server(ThreadingTCPServer):
     def handle_error(self, request, client_address):
@@ -133,20 +194,26 @@ class Server(ThreadingTCPServer):
 def main():
     global S
     cfg = config['online']['server']
+    opponents_dir = path.abspath(config['online']['pool']['opponents_dir'])
     S = State(
         buffer_dir = path.abspath(cfg['buffer_dir']),
         drain_dir = path.abspath(cfg['drain_dir']),
         capacity = cfg['capacity'],
         force_sequential = cfg['force_sequential'],
+        opponents_dir = opponents_dir,
         dir_lock = Lock(),
         param_lock = Lock(),
+        pool_lock = Lock(),
         buffer_size = 0,
         submission_id = 0,
         mortal_param = None,
         dqn_param = None,
         param_version = 0,
         idle_param_version = 0,
+        pool_opponents = [],
+        pool_version = 0,
     )
+    load_pool()
 
     bind_addr = (config['online']['remote']['host'], config['online']['remote']['port'])
     if path.isdir(S.buffer_dir):
@@ -164,6 +231,26 @@ def main():
         host, port = bind_addr
         logging.info(f'listening on {host}:{port}')
         server.serve_forever()
+
+def load_pool():
+    os.makedirs(S.opponents_dir, exist_ok=True)
+    index_file = path.join(S.opponents_dir, 'index.json')
+    if path.exists(index_file):
+        with open(index_file, encoding='utf-8') as f:
+            data = json.load(f)
+        S.pool_version = data['version']
+        S.pool_opponents = data['opponents']
+    else:
+        S.pool_opponents = [{
+            'id': 0,
+            'name': 'baseline',
+            'state_file': path.abspath(config['baseline']['train']['state_file']),
+            'meta': {},
+        }]
+        S.pool_version = 1
+        write_index()
+        logging.info(f'initialized opponent pool at {S.opponents_dir}')
+    logging.info(f'opponent pool v{S.pool_version}: {[op["name"] for op in S.pool_opponents]}')
 
 if __name__ == '__main__':
     try:
