@@ -63,7 +63,8 @@ def get_opponent(op_id):
     with socket.socket() as conn:
         conn.connect(remote)
         send_msg(conn, {'type': 'get_opponent', 'id': op_id})
-        return recv_msg(conn)
+        (size,) = struct.unpack('<Q', recv_binary(conn, 8))
+        return {'status': 'ok', 'weights': recv_binary(conn, size)}
 
 def promote(mortal, dqn, meta=None):
     remote = (config['online']['remote']['host'], config['online']['remote']['port'])

@@ -117,6 +117,7 @@ def train():
     best_perf = {
         'avg_rank': 4.,
         'avg_pt': -135.,
+        'pool_version': -1,
     }
 
     steps = 0
@@ -140,8 +141,10 @@ def train():
             scheduler.load_state_dict(state['scheduler'])
         scaler.load_state_dict(state['scaler'])
         best_perf = state['best_perf']
+        if 'pool_version' not in best_perf:
+            best_perf['pool_version'] = state.get('pool_version', -1)
         steps = state['steps']
-    last_pool_version = state.get('pool_version', -1) if path.exists(state_file) else -1
+    last_pool_version = state.get('pool_version', best_perf.get('pool_version', -1)) if path.exists(state_file) else -1
 
     optimizer.zero_grad(set_to_none=True)
     ce = nn.CrossEntropyLoss()
@@ -390,11 +393,11 @@ def train():
 
                 if not is_baseline and steps % test_every == 0:
                     pool = get_pool()
-                    if pool['version'] != last_pool_version:
-                        best_perf = {'avg_rank': 4., 'avg_pt': -135.}
-                        last_pool_version = pool['version']
-                        logging.info(f'opponent pool upgraded to v{pool["version"]}, best_perf reset')
+                    pool_changed = pool['version'] != last_pool_version
+                    last_pool_version = pool['version']
                     state['pool_version'] = last_pool_version
+                    if pool_changed:
+                        logging.info(f'opponent pool upgraded to v{pool["version"]}')
 
                     results = test_player.test_all(pool['opponents'], test_games, mortal, dqn, device)
                     mortal.train()
@@ -408,11 +411,26 @@ def train():
                     avg_rank = sum((i + 1) * c for i, c in enumerate(totals)) / total
                     avg_pt = sum(p * c for p, c in zip([90, 45, 0, -135], totals)) / total
 
-                    better = avg_pt >= best_perf['avg_pt'] and avg_rank <= best_perf['avg_rank']
-                    if better:
-                        past_best = best_perf.copy()
-                        best_perf['avg_pt'] = avg_pt
-                        best_perf['avg_rank'] = avg_rank
+                    prev_avg_rank = best_perf['avg_rank']
+                    prev_avg_pt = best_perf['avg_pt']
+                    # 池子升级后旧基准作废，本次评估建立新基准
+                    # 首评除非跨池全面超越旧纪录，否则不覆盖 best.pth
+                    better = avg_pt >= prev_avg_pt and avg_rank <= prev_avg_rank
+                    best_perf = {
+                        'avg_rank': avg_rank,
+                        'avg_pt': avg_pt,
+                        'pool_version': last_pool_version,
+                    }
+                    if pool_changed:
+                        logging.info(
+                            f'pool upgraded, best baseline: {prev_avg_pt:.4}pt/{prev_avg_rank:.4} '
+                            f'-> {avg_pt:.4}pt/{avg_rank:.4} (best.pth kept)'
+                        )
+                    elif better:
+                        logging.info(
+                            f'new best: {prev_avg_pt:.4}pt/{prev_avg_rank:.4} '
+                            f'-> {avg_pt:.4}pt/{avg_rank:.4}'
+                        )
 
                     logging.info(f'avg rank: {avg_rank:.6} (pool v{pool["version"]}, {len(results)} opponents)')
                     logging.info(f'avg pt: {avg_pt:.6}')
@@ -465,12 +483,13 @@ def train():
                     writer.add_scalar('test_play/fuuro_point', stat.avg_fuuro_point, steps)
                     writer.flush()
 
+                    state['best_perf'] = best_perf
+                    torch.save(state, state_file)
                     if better:
-                        torch.save(state, state_file)
                         logging.info(
                             'a new record has been made, '
-                            f'pt: {past_best["avg_pt"]:.4} -> {best_perf["avg_pt"]:.4}, '
-                            f'rank: {past_best["avg_rank"]:.4} -> {best_perf["avg_rank"]:.4}, '
+                            f'pt: {prev_avg_pt:.4} -> {avg_pt:.4}, '
+                            f'rank: {prev_avg_rank:.4} -> {avg_rank:.4}, '
                             f'saving to {best_state_file}'
                         )
                         shutil.copy(state_file, best_state_file)

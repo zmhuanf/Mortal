@@ -2,6 +2,7 @@ import prelude
 
 import logging
 import shutil
+import struct
 import torch
 import sys
 import os
@@ -145,10 +146,9 @@ class Handler(BaseRequestHandler):
             state_file = S.pool_opponents[msg['id']]['state_file']
         with open(state_file, 'rb') as f:
             weights = f.read()
-        self.send_msg({
-            'status': 'ok',
-            'weights': weights,
-        })
+        # 直接传输原始字节，避免 torch.save 对大权重重复序列化导致内存峰值过高
+        self.request.sendall(struct.pack('<Q', len(weights)))
+        self.request.sendall(weights)
 
     def handle_promote(self, msg):
         with S.pool_lock:
