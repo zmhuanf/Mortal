@@ -9,6 +9,7 @@ def train():
     import json
     import shutil
     import random
+    import numpy as np
     import torch
     from copy import deepcopy
     from os import path
@@ -26,6 +27,7 @@ def train():
     from dataloader import FileDatasetsIter, worker_init_fn
     from lr_scheduler import LinearWarmUpCosineAnnealingLR
     from model import Brain, DQN, AuxNet
+    from replay_buffer import PrioritizedReplayBuffer
     from libriichi.consts import obs_shape
     from config import config
 
@@ -47,7 +49,11 @@ def train():
     per_cfg = config.get('per', {})
     per_alpha = per_cfg.get('alpha', 0.0)
     per_beta = per_cfg.get('beta', 0.0)
-    per_epsilon = per_cfg.get('epsilon', 1e-4)
+    per_epsilon = per_cfg.get('epsilon', 1e-6)
+    per_capacity = per_cfg.get('capacity', 200000)
+    per_min_size = per_cfg.get('min_size', 8192)
+    per_beta_end = per_cfg.get('beta_end', 1.0)
+    per_beta_anneal_steps = per_cfg.get('beta_anneal_steps', 100000)
     use_per = online and per_alpha > 0
     assert save_every % opt_step_every == 0
     assert test_every % save_every == 0
@@ -153,6 +159,18 @@ def train():
 
     optimizer.zero_grad(set_to_none=True)
     ce = nn.CrossEntropyLoss()
+
+    per_buffer = None
+    if use_per:
+        per_buffer = PrioritizedReplayBuffer(
+            capacity=per_capacity,
+            alpha=per_alpha,
+            beta=per_beta,
+            beta_end=per_beta_end,
+            beta_anneal_steps=per_beta_anneal_steps,
+            eps=per_epsilon,
+        )
+        logging.info(f'PER enabled: capacity={per_capacity}, alpha={per_alpha}, beta={per_beta}->{per_beta_end}, min_size={per_min_size}')
 
     def update_target():
         with torch.no_grad():
@@ -328,7 +346,7 @@ def train():
         remaining_bs = 0
         pb = tqdm(total=save_every, desc='TRAIN', initial=steps % save_every)
 
-        def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns):
+        def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns, buffer_indices=None, is_weights=None):
             nonlocal steps
             nonlocal idx
             nonlocal pb
@@ -364,15 +382,11 @@ def train():
                         q_target = n_step_rewards.unsqueeze(-1) + gamma ** n_step * next_q_gathered * (~is_episode_end).unsqueeze(-1)
 
                     td_error = (q - q_target).abs().mean(-1)  # (N,)
-                    if use_per:
-                        with torch.no_grad():
-                            weights = (td_error + per_epsilon).clamp_min(1e-8) ** per_alpha
-                            weights = weights / weights.mean()
-                            is_weights = weights ** (-per_beta)
-                            is_weights = is_weights / is_weights.mean()
-                        dqn_loss = (is_weights * 0.5 * (q - q_target).pow(2).mean(-1)).mean()
+                    per_batch_loss = 0.5 * (q - q_target).pow(2).mean(-1)  # (N,)
+                    if is_weights is not None:
+                        dqn_loss = (is_weights.to(device) * per_batch_loss).mean()
                     else:
-                        dqn_loss = 0.5 * (q - q_target).pow(2).mean()
+                        dqn_loss = per_batch_loss.mean()
                     v_loss = torch.tensor(0., device=device)
                 else:
                     # 离线：IQL expectile regression + Q 回归
@@ -420,6 +434,11 @@ def train():
                 stats['riichi_turn_loss'] += riichi_turn_loss
                 all_q[idx] = q.mean(-1)
                 all_q_target[idx] = q_target.mean(-1)
+
+                # PER 训练后用新 TD error 更新优先级
+                if per_buffer is not None and buffer_indices is not None:
+                    td_cpu = td_error.cpu().numpy()
+                    per_buffer.update_priorities(buffer_indices, td_cpu)
 
             steps += 1
             idx += 1
@@ -596,55 +615,91 @@ def train():
                         sys.exit(0)
                 pb = tqdm(total=save_every, desc='TRAIN')
 
-        for obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns in data_loader:
-            bs = obs.shape[0]
-            if bs != batch_size:
-                remaining_obs.append(obs)
-                remaining_actions.append(actions)
-                remaining_masks.append(masks)
-                remaining_player_ranks.append(player_ranks)
-                remaining_next_obs.append(next_obs)
-                remaining_n_step_rewards.append(n_step_rewards)
-                remaining_next_masks.append(next_masks)
-                remaining_is_episode_end.append(is_episode_end)
-                remaining_shantens.append(shantens)
-                remaining_fuuro_counts.append(fuuro_counts)
-                remaining_riichi_turns.append(riichi_turns)
-                remaining_bs += bs
-                continue
-            train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns)
+        # 辅助函数：把 DataLoader 产出的 tensor batch 拆为 transition 列表加入 PER buffer
+        def feed_per_buffer(*tensors):
+            """把 tensor batch 拆为逐条 transition 存入 PER buffer"""
+            bs = tensors[0].shape[0]
+            samples = []
+            for i in range(bs):
+                samples.append(tuple(t[i].numpy() for t in tensors))
+            per_buffer.add(samples)
 
-        remaining_batches = remaining_bs // batch_size
-        if remaining_batches > 0:
-            obs = torch.cat(remaining_obs, dim=0)
-            actions = torch.cat(remaining_actions, dim=0)
-            masks = torch.cat(remaining_masks, dim=0)
-            player_ranks = torch.cat(remaining_player_ranks, dim=0)
-            next_obs = torch.cat(remaining_next_obs, dim=0)
-            n_step_rewards = torch.cat(remaining_n_step_rewards, dim=0)
-            next_masks = torch.cat(remaining_next_masks, dim=0)
-            is_episode_end = torch.cat(remaining_is_episode_end, dim=0)
-            shantens = torch.cat(remaining_shantens, dim=0)
-            fuuro_counts = torch.cat(remaining_fuuro_counts, dim=0)
-            riichi_turns = torch.cat(remaining_riichi_turns, dim=0)
-            start = 0
-            end = batch_size
-            while end <= remaining_bs:
-                train_batch(
-                    obs[start:end],
-                    actions[start:end],
-                    masks[start:end],
-                    player_ranks[start:end],
-                    next_obs[start:end],
-                    n_step_rewards[start:end],
-                    next_masks[start:end],
-                    is_episode_end[start:end],
-                    shantens[start:end],
-                    fuuro_counts[start:end],
-                    riichi_turns[start:end],
-                )
-                start = end
-                end += batch_size
+        def sample_from_per():
+            """从 PER buffer 采样并转为 tensor batch"""
+            stacked, indices, weights = per_buffer.sample(batch_size)
+            tensors = tuple(torch.from_numpy(arr) for arr in stacked)
+            return tensors, indices, torch.from_numpy(weights)
+
+        if use_per:
+            # PER 模式：数据先入 buffer，达预热容量后开始训练
+            warmup_logged = False
+            for batch_tensors in data_loader:
+                obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns = batch_tensors
+                feed_per_buffer(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns)
+
+                if len(per_buffer) < per_min_size:
+                    if not warmup_logged:
+                        logging.info(f'PER warmup: {len(per_buffer)}/{per_min_size}')
+                        warmup_logged = True
+                    continue
+
+                if warmup_logged:
+                    logging.info(f'PER warmup done, start training with {len(per_buffer)} transitions')
+                    warmup_logged = False
+
+                sampled_tensors, buf_indices, is_weights = sample_from_per()
+                train_batch(*sampled_tensors, buffer_indices=buf_indices, is_weights=is_weights)
+        else:
+            # 非 PER 模式：DataLoader 直接喂入训练
+            for obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns in data_loader:
+                bs = obs.shape[0]
+                if bs != batch_size:
+                    remaining_obs.append(obs)
+                    remaining_actions.append(actions)
+                    remaining_masks.append(masks)
+                    remaining_player_ranks.append(player_ranks)
+                    remaining_next_obs.append(next_obs)
+                    remaining_n_step_rewards.append(n_step_rewards)
+                    remaining_next_masks.append(next_masks)
+                    remaining_is_episode_end.append(is_episode_end)
+                    remaining_shantens.append(shantens)
+                    remaining_fuuro_counts.append(fuuro_counts)
+                    remaining_riichi_turns.append(riichi_turns)
+                    remaining_bs += bs
+                    continue
+                train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns)
+
+            remaining_batches = remaining_bs // batch_size
+            if remaining_batches > 0:
+                obs = torch.cat(remaining_obs, dim=0)
+                actions = torch.cat(remaining_actions, dim=0)
+                masks = torch.cat(remaining_masks, dim=0)
+                player_ranks = torch.cat(remaining_player_ranks, dim=0)
+                next_obs = torch.cat(remaining_next_obs, dim=0)
+                n_step_rewards = torch.cat(remaining_n_step_rewards, dim=0)
+                next_masks = torch.cat(remaining_next_masks, dim=0)
+                is_episode_end = torch.cat(remaining_is_episode_end, dim=0)
+                shantens = torch.cat(remaining_shantens, dim=0)
+                fuuro_counts = torch.cat(remaining_fuuro_counts, dim=0)
+                riichi_turns = torch.cat(remaining_riichi_turns, dim=0)
+                start = 0
+                end = batch_size
+                while end <= remaining_bs:
+                    train_batch(
+                        obs[start:end],
+                        actions[start:end],
+                        masks[start:end],
+                        player_ranks[start:end],
+                        next_obs[start:end],
+                        n_step_rewards[start:end],
+                        next_masks[start:end],
+                        is_episode_end[start:end],
+                        shantens[start:end],
+                        fuuro_counts[start:end],
+                        riichi_turns[start:end],
+                    )
+                    start = end
+                    end += batch_size
         pb.close()
 
         if online:

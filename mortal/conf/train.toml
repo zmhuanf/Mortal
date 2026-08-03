@@ -72,17 +72,29 @@ riichi_turn_weight = 0.05
 
 # ============================================================
 # [per] 优先级经验回放配置 (在线训练)
-# 按 TD error 优先采样关键决策，alpha=0 退化为均匀采样
+# 维护 transition 级 buffer，按 |TD error|^alpha 优先采样关键决策
 # ============================================================
 [per]
 # 优先级指数，0 = 均匀，1 = 完全按优先级 (在线训练)
 alpha = 0.6
 
-# importance sampling 补偿系数，0 = 不补偿，1 = 完全补偿 (在线训练)
+# importance sampling 补偿起始系数，随训练退火到 beta_end (在线训练)
 beta = 0.4
 
-# 优先级衰减系数，新数据初始优先级 (在线训练)
-epsilon = 1e-4
+# importance sampling 补偿终止系数，1 = 完全补偿 (在线训练)
+beta_end = 1.0
+
+# beta 退火总步数，从 beta 线性退火到 beta_end (在线训练)
+beta_anneal_steps = 100000
+
+# buffer 容量，超出后旧 transition 被淘汰 (在线训练)
+capacity = 8192
+
+# 预热最小容量，buffer 积累到该值后才开始采样训练 (在线训练)
+min_size = 4096
+
+# 优先级下限，防 TD error=0 的 transition 永不采样 (在线训练)
+epsilon = 1e-6
 
 # ============================================================
 # [optim] 优化器参数 (baseline训练|离线训练|在线训练)
