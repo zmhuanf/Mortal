@@ -58,7 +58,7 @@ buffer_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/buffer'
 drain_dir = 'D:/Workspace/Mortal/mortal/mortal_v2/drain'
 
 # 缓冲区容量，达到后通知 client 停止生成新数据 (在线训练)
-capacity = 1600
+capacity = 2400
 
 # 是否强制顺序模式，true 时 trainer 忙则 client 等待 (在线训练)
 force_sequential = false

@@ -35,7 +35,7 @@ def build_opponent_engine(state, device, enable_compile, name):
         is_oracle = False,
         version = version,
         device = torch.device(device),
-        enable_amp = True,
+        enable_amp = config['control']['enable_amp'],
         enable_rule_based_agari_guard = True,
         name = name,
         action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q',
@@ -66,7 +66,7 @@ class TestPlayer:
             is_oracle = False,
             version = self.chal_version,
             device = device,
-            enable_amp = True,
+            enable_amp = config['control']['enable_amp'],
             name = 'mortal',
             action_source = 'policy',
         )
@@ -103,7 +103,7 @@ class TestPlayer:
             is_oracle = False,
             version = self.chal_version,
             device = device,
-            enable_amp = True,
+            enable_amp = config['control']['enable_amp'],
             name = 'mortal',
             action_source = 'policy',
         )
@@ -177,7 +177,7 @@ class TrainPlayer:
             uncertainty_scale = self.uncertainty_scale,
             temperature = temperature,
             device = device,
-            enable_amp = True,
+            enable_amp = config['control']['enable_amp'],
             name = 'trainee',
             action_source = 'policy',
         )
