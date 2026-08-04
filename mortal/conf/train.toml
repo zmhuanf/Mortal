@@ -18,7 +18,7 @@ file_batch_size = 15
 reserve_ratio = 0.0
 
 # DataLoader 工作进程数 (baseline训练|离线训练|在线训练)
-num_workers = 1
+num_workers = 2
 
 # 只加载包含这些玩家名的牌谱，空列表 = 加载全部 (baseline训练|离线训练|在线训练)
 player_names_files = []
@@ -79,10 +79,10 @@ riichi_turn_weight = 0.05
 alpha = 0.6
 
 # importance sampling 补偿起始系数，随训练退火到 beta_end (在线训练)
-beta = 0.4
+beta = 0.5
 
 # importance sampling 补偿终止系数，1 = 完全补偿 (在线训练)
-beta_end = 1.0
+beta_end = 0.5
 
 # beta 退火总步数，从 beta 线性退火到 beta_end (在线训练)
 beta_anneal_steps = 100000

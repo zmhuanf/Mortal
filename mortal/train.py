@@ -353,18 +353,19 @@ def train():
             nonlocal best_perf
             nonlocal last_pool_version
 
-            obs = obs.to(dtype=torch.float32, device=device)
-            actions = actions.to(dtype=torch.int64, device=device)
-            masks = masks.to(dtype=torch.bool, device=device)
-            player_ranks = player_ranks.to(dtype=torch.int64, device=device)
-            next_obs = next_obs.to(dtype=torch.float32, device=device)
-            n_step_rewards = n_step_rewards.to(dtype=torch.float32, device=device)
-            next_masks = next_masks.to(dtype=torch.bool, device=device)
-            is_episode_end = is_episode_end.to(dtype=torch.bool, device=device)
-            shantens = shantens.to(dtype=torch.int64, device=device)
-            fuuro_counts = fuuro_counts.to(dtype=torch.int64, device=device)
-            riichi_turns = riichi_turns.to(dtype=torch.int64, device=device)
-            assert masks[range(batch_size), actions].all()
+            obs = obs.to(dtype=torch.float32, device=device, non_blocking=True)
+            actions = actions.to(dtype=torch.int64, device=device, non_blocking=True)
+            masks = masks.to(dtype=torch.bool, device=device, non_blocking=True)
+            player_ranks = player_ranks.to(dtype=torch.int64, device=device, non_blocking=True)
+            next_obs = next_obs.to(dtype=torch.float32, device=device, non_blocking=True)
+            n_step_rewards = n_step_rewards.to(dtype=torch.float32, device=device, non_blocking=True)
+            next_masks = next_masks.to(dtype=torch.bool, device=device, non_blocking=True)
+            is_episode_end = is_episode_end.to(dtype=torch.bool, device=device, non_blocking=True)
+            shantens = shantens.to(dtype=torch.int64, device=device, non_blocking=True)
+            fuuro_counts = fuuro_counts.to(dtype=torch.int64, device=device, non_blocking=True)
+            riichi_turns = riichi_turns.to(dtype=torch.int64, device=device, non_blocking=True)
+            if steps % 1000 == 0:
+                assert masks[range(batch_size), actions].all()
 
             with torch.autocast(device.type, enabled=enable_amp):
                 phi = mortal(obs)
@@ -615,14 +616,9 @@ def train():
                         sys.exit(0)
                 pb = tqdm(total=save_every, desc='TRAIN')
 
-        # 辅助函数：把 DataLoader 产出的 tensor batch 拆为 transition 列表加入 PER buffer
         def feed_per_buffer(*tensors):
-            """把 tensor batch 拆为逐条 transition 存入 PER buffer"""
-            bs = tensors[0].shape[0]
-            samples = []
-            for i in range(bs):
-                samples.append(tuple(t[i].numpy() for t in tensors))
-            per_buffer.add(samples)
+            """整批 tensor 转 numpy 数组列表存入 PER buffer"""
+            per_buffer.add([t.numpy() for t in tensors])
 
         def sample_from_per():
             """从 PER buffer 采样并转为 tensor batch"""

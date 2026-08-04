@@ -6,7 +6,7 @@
 # ============================================================
 [test_play]
 # 每次评估的对局总数，实际 seed 数 = games // 4 (离线训练|在线训练)
-games = 1000
+games = 1600
 
 # 评估对局日志保存目录 (离线训练|在线训练)
 log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/test_play'
