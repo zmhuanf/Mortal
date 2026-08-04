@@ -66,7 +66,7 @@ def get_opponent(op_id):
         (size,) = struct.unpack('<Q', recv_binary(conn, 8))
         return {'status': 'ok', 'weights': recv_binary(conn, size)}
 
-def promote(mortal, dqn, meta=None):
+def promote(mortal, dqn, meta=None, pool_version=None):
     remote = (config['online']['remote']['host'], config['online']['remote']['port'])
     with socket.socket() as conn:
         conn.connect(remote)
@@ -75,6 +75,7 @@ def promote(mortal, dqn, meta=None):
             'mortal': {k: v.cpu() for k, v in mortal.state_dict().items()},
             'dqn': {k: v.cpu() for k, v in dqn.state_dict().items()},
             'meta': meta,
+            'pool_version': pool_version,
         })
         return recv_msg(conn)
 

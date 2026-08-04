@@ -9,7 +9,7 @@
 games = 800
 
 # self-play 对局日志保存目录 (在线训练)
-log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3/train_play'
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/train_play'
 
 # Boltzmann 探索的 epsilon，表示非贪婪采样的概率，仅这些动作走温度采样 (在线训练)
 boltzmann_epsilon = 0.005
@@ -52,10 +52,10 @@ port = 5000
 
 [online.server]
 # self-play 对局日志缓冲目录 (在线训练)
-buffer_dir = 'D:/Workspace/Mortal/mortal/mortal_v3/buffer'
+buffer_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/buffer'
 
 # drain 目录，train.py 从这里获取训练数据 (在线训练)
-drain_dir = 'D:/Workspace/Mortal/mortal/mortal_v3/drain'
+drain_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/drain'
 
 # 缓冲区容量，达到后通知 client 停止生成新数据 (在线训练)
 capacity = 2400
@@ -69,7 +69,7 @@ force_sequential = false
 # ============================================================
 [online.pool]
 # 对手池存档目录，含 index.json 与各对手权重文件 (在线训练)
-opponents_dir = 'D:/Workspace/Mortal/mortal/mortal_v3/opponents'
+opponents_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/opponents'
 
 # 晋级阈值，滑动窗口平均名次优于该值视为打赢当前对手（1v3 中 2.5 = 持平）(在线训练)
 promote_avg_rank = 2.4

@@ -9,7 +9,7 @@
 globs = ['D:/Data/**/*.mjson']
 
 # 文件索引缓存路径 (baseline训练|离线训练|在线训练)
-file_index = 'D:/Workspace/Mortal/mortal/mortal_v3/file_index.pth'
+file_index = 'D:/Workspace/Mortal/mortal/mortal_v3.1/file_index.pth'
 
 # 每次并行加载的文件数 (baseline训练|离线训练|在线训练)
 file_batch_size = 15

@@ -152,6 +152,14 @@ class Handler(BaseRequestHandler):
 
     def handle_promote(self, msg):
         with S.pool_lock:
+            # 乐观锁校验，防止多 client 并发重复晋级同一对手
+            if msg.get('pool_version') is not None and msg['pool_version'] != S.pool_version:
+                logging.info(
+                    f'promote rejected: stale pool_version={msg["pool_version"]} '
+                    f'!= current={S.pool_version}'
+                )
+                self.send_msg({'status': 'stale', 'version': S.pool_version})
+                return
             op_id = len(S.pool_opponents)
             name = f'op_{op_id:04d}'
             state_file = path.join(S.opponents_dir, f'{op_id:04d}_{name}.pth')

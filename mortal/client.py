@@ -58,6 +58,7 @@ def main():
 
         pool = get_pool()
         current_opponent = pool['opponents'][-1]
+        pool_version = pool['version']
         if current_opponent['state_file'] != champion_file:
             # 跨机时本地无权重文件，从 server 拉取对手权重
             rsp = get_opponent(current_opponent['id'])
@@ -96,14 +97,17 @@ def main():
                 'avg_rank': float(ma_avg_rank),
                 'avg_pt': float(ma_avg_pt),
                 'sessions': len(history),
-            })
-            logging.info(
-                f'promoted to opponent pool v{rsp["version"]}: {rsp["current"]["name"]} '
-                f'(ma_avg_rank={ma_avg_rank:.6}, ma_avg_pt={ma_avg_pt:.6}pt)'
-            )
+            }, pool_version=pool_version)
+            if rsp['status'] == 'stale':
+                logging.info(f'promote rejected: pool already updated to v{rsp["version"]}, resetting history')
+            else:
+                logging.info(
+                    f'promoted to opponent pool v{rsp["version"]}: {rsp["current"]["name"]} '
+                    f'(ma_avg_rank={ma_avg_rank:.6}, ma_avg_pt={ma_avg_pt:.6}pt)'
+                )
+                cooldown_left = promote_cooldown
+                champion_file = None
             history.clear()
-            cooldown_left = promote_cooldown
-            champion_file = None
 
         logs = {}
         for filename in file_list:

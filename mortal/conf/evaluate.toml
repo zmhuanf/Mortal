@@ -9,7 +9,7 @@
 games = 1000
 
 # 评估对局日志保存目录 (离线训练|在线训练)
-log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3/test_play'
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.1/test_play'
 
 # ============================================================
 # [1v3] 1v3 对战评估配置 (1v3)
@@ -46,7 +46,7 @@ tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
 device = 'cuda:0'
 
 # py checkpoint 路径，type=py 时使用 (1v3)
-state_file = 'D:/Workspace/Mortal/mortal/mortal_v3/best.pth'
+state_file = 'D:/Workspace/Mortal/mortal/mortal_v3.1/best.pth'
 
 # 是否编译 py 模型，type=py 时使用 (1v3)
 enable_compile = false
