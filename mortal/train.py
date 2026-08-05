@@ -54,7 +54,7 @@ def train():
     per_min_size = per_cfg.get('min_size', 8192)
     per_beta_end = per_cfg.get('beta_end', 1.0)
     per_beta_anneal_steps = per_cfg.get('beta_anneal_steps', 100000)
-    use_per = online and per_alpha > 0
+    use_per = online and per_cfg.get('enabled', False) and per_alpha > 0
     assert save_every % opt_step_every == 0
     assert test_every % save_every == 0
 

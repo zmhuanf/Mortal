@@ -89,6 +89,9 @@ houjuu = -0.15
 # 维护 transition 级 buffer，按 |TD error|^alpha 优先采样关键决策
 # ============================================================
 [per]
+# 是否启用 PER，false 时走 DataLoader 直接喂入，省去采样与优先级更新开销 (在线训练)
+enabled = false
+
 # 优先级指数，0 = 均匀，1 = 完全按优先级 (在线训练)
 alpha = 0.6
 
