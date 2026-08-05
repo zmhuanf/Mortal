@@ -80,6 +80,10 @@ class FileDatasetsIter(IterableDataset):
     def populate_buffer(self, file_list):
         n_step = config['env'].get('n_step', 3)
         gamma = float(config['env']['gamma'])
+        reward_cfg = config.get('reward', {})
+        riichi_reward = float(reward_cfg.get('riichi', 0.0))
+        agari_reward = float(reward_cfg.get('agari', 0.0))
+        houjuu_reward = float(reward_cfg.get('houjuu', 0.0))
         data = self.loader.load_gz_log_files(file_list)
         for file in data:
             for game in file:
@@ -92,6 +96,9 @@ class FileDatasetsIter(IterableDataset):
                 at_kyoku = game.take_at_kyoku()
                 dones = game.take_dones()
                 apply_gamma = game.take_apply_gamma()
+                is_riichi_turn = np.array(game.take_is_riichi_turn(), dtype=bool)
+                is_agari_turn = np.array(game.take_is_agari_turn(), dtype=bool)
+                is_houjuu_turn = np.array(game.take_is_houjuu_turn(), dtype=bool)
                 shantens = np.array(game.take_shantens(), dtype=np.int64).clip(0, 6)
                 fuuro_counts = np.frombuffer(game.take_fuuro_counts(), dtype=np.uint8).astype(np.int64).clip(0, 6)
                 riichi_turns = np.frombuffer(game.take_riichi_turns(), dtype=np.uint8).astype(np.int64)
@@ -124,6 +131,13 @@ class FileDatasetsIter(IterableDataset):
                 # apply_gamma 前缀和，按折扣步数定位 next_idx 而非 transition 偏移
                 gamma_prefix = np.concatenate(([0], np.cumsum(np.asarray(apply_gamma, dtype=np.int64))))
 
+                # turn-level reward 按动作步全额叠加，归因于决策动作本身
+                turn_rewards = (
+                    is_riichi_turn * riichi_reward
+                    + is_agari_turn * agari_reward
+                    + is_houjuu_turn * houjuu_reward
+                ).astype(np.float32)
+
                 for i in range(game_size):
                     std = steps_to_done[i]
                     if std < n_step:
@@ -136,6 +150,8 @@ class FileDatasetsIter(IterableDataset):
                         # 从 i 起第 n_step 个 apply_gamma 步之后的 transition
                         next_idx = int(np.searchsorted(gamma_prefix, gamma_prefix[i] + n_step, side='left'))
                         next_idx = min(next_idx, game_size - 1)
+
+                    n_step_r += turn_rewards[i]
 
                     entry = [
                         obs[i],
