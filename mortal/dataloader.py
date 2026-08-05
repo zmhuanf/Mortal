@@ -101,6 +101,8 @@ class FileDatasetsIter(IterableDataset):
                 player_id = game.take_player_id()
 
                 game_size = len(obs)
+                if game_size == 0:
+                    continue
 
                 grp_feature = grp.take_feature()
                 if grp_feature.shape[0] > 12:
