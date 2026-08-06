@@ -1,0 +1,147 @@
+# 训练相关配置 (baseline训练|离线训练|在线训练)
+
+# ============================================================
+# [dataset] 牌谱数据集配置 (baseline训练|离线训练|在线训练)
+# 在线训练时若启用混合，则同时从人类牌谱和 self-play 数据采样
+# ============================================================
+[dataset]
+# 人类牌谱文件 glob 模式，支持 .mjson 和 .json.gz (baseline训练|离线训练|在线训练)
+globs = ['D:/Data/**/*.mjson']
+
+# 文件索引缓存路径 (baseline训练|离线训练|在线训练)
+file_index = 'D:/Workspace/Mortal/mortal/mortal_v3.2/file_index.pth'
+
+# 每次并行加载的文件数 (baseline训练|离线训练|在线训练)
+file_batch_size = 15
+
+# 保留比例，前 reserve_ratio 比例的样本不参与训练 (baseline训练|离线训练|在线训练)
+reserve_ratio = 0.0
+
+# DataLoader 工作进程数 (baseline训练|离线训练|在线训练)
+num_workers = 2
+
+# 只加载包含这些玩家名的牌谱，空列表 = 加载全部 (baseline训练|离线训练|在线训练)
+player_names_files = []
+
+# 训练轮数 (baseline训练|离线训练|在线训练)
+num_epochs = 1
+
+# 是否启用数据增强（数牌花色置换 m↔p）(baseline训练|离线训练|在线训练)
+enable_augmentation = true
+
+# 增强数据是否优先加载 (baseline训练|离线训练|在线训练)
+augmented_first = false
+
+# 在线训练时人类牌谱的混合比例，0 = 纯 self-play，1 = 纯人类 (在线训练)
+online_human_ratio = 0.3
+
+# ============================================================
+# [iql] IQL 离线强化学习参数 (离线训练)
+# 在线训练使用 Double DQN，不使用 tau/beta/clip
+# ema_decay 在在线和离线均使用
+# ============================================================
+[iql]
+# expectile regression 的 tau，偏向正 TD 的权重 (离线训练)
+tau = 0.7
+
+# advantage 指数缩放系数，越小越激进 (离线训练|在线训练)
+beta = 3.0
+
+# exp_adv 上限，过大易在 fp16 下溢出为 inf (离线训练|在线训练)
+clip = 20.0
+
+# target network EMA 软更新系数，target = ema_decay * target + (1-ema_decay) * online (离线训练|在线训练)
+ema_decay = 0.995
+
+# ============================================================
+# [aux] 多任务辅助头权重 (baseline训练|离线训练|在线训练)
+# 权重为 0 时该辅助任务不参与 loss
+# ============================================================
+[aux]
+# 预测下一局排名(4类)的 loss 权重 (baseline训练|离线训练|在线训练)
+next_rank_weight = 0.2
+
+# 预测当前向听数(7类)的 loss 权重 (baseline训练|离线训练|在线训练)
+shanten_weight = 0.1
+
+# 预测当前副露数(7类)的 loss 权重 (baseline训练|离线训练|在线训练)
+fuuro_weight = 0.05
+
+# 预测本局立直巡目(7类，0=未立直)的 loss 权重 (baseline训练|离线训练|在线训练)
+riichi_turn_weight = 0.05
+
+# ============================================================
+# [reward] turn-level reward 细化 (baseline训练|离线训练|在线训练)
+# 叠加到 n_step_reward 上，需配合 GRP 全局 reward 作为锚点
+# ============================================================
+[reward]
+# 立直步的额外 reward (baseline训练|离线训练|在线训练)
+riichi = 0.15
+
+# 和牌步的额外 reward (baseline训练|离线训练|在线训练)
+agari = 0.5
+
+# 放炮步的额外 reward (负值) (baseline训练|离线训练|在线训练)
+houjuu = -0.15
+
+# ============================================================
+# [per] 优先级经验回放配置 (在线训练)
+# 维护 transition 级 buffer，按 |TD error|^alpha 优先采样关键决策
+# ============================================================
+[per]
+# 是否启用 PER，false 时走 DataLoader 直接喂入，省去采样与优先级更新开销 (在线训练)
+enabled = false
+
+# 优先级指数，0 = 均匀，1 = 完全按优先级 (在线训练)
+alpha = 0.6
+
+# importance sampling 补偿起始系数，随训练退火到 beta_end (在线训练)
+beta = 0.5
+
+# importance sampling 补偿终止系数，1 = 完全补偿 (在线训练)
+beta_end = 0.5
+
+# beta 退火总步数，从 beta 线性退火到 beta_end (在线训练)
+beta_anneal_steps = 100000
+
+# buffer 容量，超出后旧 transition 被淘汰 (在线训练)
+capacity = 16384
+
+# 预热最小容量，buffer 积累到该值后才开始采样训练 (在线训练)
+min_size = 4096
+
+# 优先级下限，防 TD error=0 的 transition 永不采样 (在线训练)
+epsilon = 1e-6
+
+# ============================================================
+# [optim] 优化器参数 (baseline训练|离线训练|在线训练)
+# ============================================================
+[optim]
+# AdamW eps (baseline训练|离线训练|在线训练)
+eps = 1e-8
+
+# AdamW betas (baseline训练|离线训练|在线训练)
+betas = [0.9, 0.999]
+
+# weight decay，仅作用于 Conv1d/Linear 的 weight (baseline训练|离线训练|在线训练)
+weight_decay = 0.1
+
+# 梯度裁剪范数，0 = 不裁剪 (baseline训练|离线训练|在线训练)
+max_grad_norm = 1.0
+
+# ============================================================
+# [optim.scheduler] 学习率调度器 (baseline训练|离线训练|在线训练)
+# LinearWarmUp + CosineAnnealing
+# ============================================================
+[optim.scheduler]
+# warmup 结束后的峰值学习率 (baseline训练|离线训练|在线训练)
+peak = 1.5e-4
+
+# cosine 退火结束时的最终学习率 (baseline训练|离线训练|在线训练)
+final = 1.5e-4
+
+# warmup 步数，0 = 不做 warmup (baseline训练|离线训练|在线训练)
+warm_up_steps = 5000
+
+# cosine 周期总步数，0 = 不做退火 (baseline训练|离线训练|在线训练)
+max_steps = 5000

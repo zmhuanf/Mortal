@@ -6,7 +6,7 @@ server_ip = sys.argv[2]
 device = sys.argv[3]
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-conf_dir = os.path.join(script_dir, 'conf')
+conf_dir = os.path.join(script_dir, 'conf_v3.2')
 
 def patch(filepath, replacements):
     with open(filepath, encoding='utf-8') as f:

@@ -14,9 +14,9 @@
 #   conf/grp.toml       = grp
 
 include = [
-    'conf/base.toml',
-    'conf/train.toml',
-    'conf/online.toml',
-    'conf/evaluate.toml',
-    'conf/grp.toml',
+    'conf_v3.2/base.toml',
+    'conf_v3.2/train.toml',
+    'conf_v3.2/online.toml',
+    'conf_v3.2/evaluate.toml',
+    'conf_v3.2/grp.toml',
 ]

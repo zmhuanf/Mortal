@@ -1,0 +1,86 @@
+# 对战评估配置 (离线训练|在线训练|1v3)
+
+# ============================================================
+# [test_play] test_play 1v3 对战评估配置 (离线训练|在线训练)
+# is_baseline=true 时整体跳过
+# ============================================================
+[test_play]
+# 每次评估的对局总数，实际 seed 数 = games // 4 (离线训练|在线训练)
+games = 1000
+
+# 评估对局日志保存目录 (离线训练|在线训练)
+log_dir = 'D:/Workspace/Mortal/mortal/mortal_v3.2/test_play'
+
+# ============================================================
+# [1v3] 1v3 对战评估配置 (1v3)
+# one = 1 个位置的模型，three = 3 个位置的模型（报告排名方）
+# type = 'py' | 'akochan'，可自由组合
+# ============================================================
+[1v3]
+# 随机种子密钥，-1 = 随机生成 (1v3)
+seed_key = -1
+
+# 每轮对局数 (1v3)
+games_per_iter = 40
+
+# 总轮数 (1v3)
+iters = 1
+
+# 对战日志保存目录 (1v3)，每次运行会在其下新建时间命名的子文件夹
+log_dir = 'D:/Workspace/Mortal/mortal/1v3/log'
+
+[1v3.one]
+# 模型类型：py = 自研模型，akochan = 天凤AI (1v3)
+type = 'py'
+
+# 显示名称 (1v3)
+name = 'best'
+
+# akochan 安装目录，type=akochan 时使用 (1v3)
+dir = 'D:/Workspace/Mortal/akochan'
+
+# akochan tactics 配置文件，type=akochan 时使用 (1v3)
+tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
+
+# py 推理设备，type=py 时使用 (1v3)
+device = 'cuda:0'
+
+# py checkpoint 路径，type=py 时使用 (1v3)
+state_file = 'D:/Workspace/Mortal/mortal/mortal_v3.2/best.pth'
+
+# 是否编译 py 模型，type=py 时使用 (1v3)
+enable_compile = false
+
+# 是否启用混合精度推理，type=py 时使用 (1v3)
+enable_amp = true
+
+# 是否启用规则 based agari guard，type=py 时使用 (1v3)
+enable_rule_based_agari_guard = true
+
+[1v3.three]
+# 模型类型：py = 自研模型，akochan = 天凤AI (1v3)
+type = 'py'
+
+# 显示名称 (1v3)
+name = 'baseline_v3'
+
+# akochan 安装目录，type=akochan 时使用 (1v3)
+dir = 'D:/Workspace/Mortal/akochan'
+
+# akochan tactics 配置文件，type=akochan 时使用 (1v3)
+tactics = 'D:/Workspace/Mortal/akochan/tactics.json'
+
+# py 推理设备，type=py 时使用 (1v3)
+device = 'cuda:0'
+
+# py checkpoint 路径，type=py 时使用 (1v3)
+state_file = 'D:/Workspace/Mortal/mortal/1v3/baseline_v3.pth'
+
+# 是否编译 py 模型，type=py 时使用 (1v3)
+enable_compile = false
+
+# 是否启用混合精度推理，type=py 时使用 (1v3)
+enable_amp = true
+
+# 是否启用规则 based agari guard，type=py 时使用 (1v3)
+enable_rule_based_agari_guard = true

@@ -35,6 +35,7 @@ def train():
 
     online = config['control']['online']
     is_baseline = config['control'].get('is_baseline', False)
+    advantage_mode = config['control'].get('advantage_mode', 'td_error')
     batch_size = config['control']['batch_size']
     opt_step_every = config['control']['opt_step_every']
     save_every = config['control']['save_every']
@@ -401,12 +402,14 @@ def train():
                     v_loss = torch.where(td > 0, iql_tau * td**2, (1 - iql_tau) * td**2).mean()
                     dqn_loss = F.huber_loss(q, q_target, delta=10)
 
-                # AWR 策略学习，在线/离线统一
+                # AWR 策略学习，advantage_mode 控制基线选择
                 with torch.no_grad():
-                    if online:
+                    if online and advantage_mode == 'td_error':
+                        # TD error 当 advantage，off-policy 下含自举偏差
                         adv = q_target - q.detach()
                     else:
-                        adv = q_target - v
+                        # 独立 V 基线去自举，离线沿用已算的 v
+                        adv = q_target - dqn.value(phi)
                     exp_adv = (adv.mean(-1) / iql_beta).clamp(max=iql_clip).exp()
                 log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)
                 policy_loss = -(exp_adv * log_prob).mean()
