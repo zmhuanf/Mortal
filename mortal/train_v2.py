@@ -132,6 +132,8 @@ def train():
         target_dqn.load_state_dict(state['target_dqn'])
         optimizer.load_state_dict(state['optimizer'])
         scheduler.load_state_dict(state['scheduler'])
+        # checkpoint 里的 lr_lambdas 是旧 pickle 调度，重绑当前 config 曲线
+        scheduler.lr_lambdas = [scheduler._step_inner] * len(optimizer.param_groups)
         scaler.load_state_dict(state['scaler'])
         best_perf = state['best_perf']
         if 'pool_version' not in best_perf:

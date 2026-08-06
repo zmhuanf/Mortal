@@ -83,9 +83,9 @@ config = {
         'max_grad_norm': 1.0,
         'scheduler': {
             'peak': 1.5e-4,
-            'final': 1.5e-4,
+            'final': 1.5e-4,  # 与 peak 相同即 warmup 后恒定无 decay
             'warm_up_steps': 5000,
-            'max_steps': 5000,
+            'max_steps': 5000000,  # 计划总步数，超出后恒定为 final
         },
     },
     'train_play': {
