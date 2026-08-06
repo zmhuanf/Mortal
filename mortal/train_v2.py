@@ -203,6 +203,9 @@ def train():
             torch.save({'file_list': human_file_list}, human_file_index)
         logging.info(f'self-play files: {len(selfplay_file_list):,}, human files: {len(human_file_list):,}')
 
+        before_next_test_play = (test_every - steps % test_every) % test_every
+        logging.info(f'total steps: {steps:,} (~{before_next_test_play:,})')
+
         human_batch_size = max(1, int(batch_size * online_human_ratio))
         selfplay_batch_size = max(1, batch_size - human_batch_size)
 
@@ -355,18 +358,19 @@ def train():
             if steps % save_every == 0:
                 pb.close()
 
-                # 降采样减小 tensorboard 事件体积
-                all_q_1d = all_q.cpu().numpy().flatten()[::128]
-                all_q_target_1d = all_q_target.cpu().numpy().flatten()[::128]
+                # 降采样减小 tensorboard 事件体积，断点续训首区间批数可能不足 save_every
+                n_batches = idx
+                all_q_1d = all_q[:n_batches].cpu().numpy().flatten()[::128]
+                all_q_target_1d = all_q_target[:n_batches].cpu().numpy().flatten()[::128]
 
-                writer.add_scalar('loss/v_loss', stats['v_loss'] / save_every, steps)
-                writer.add_scalar('loss/policy_loss', stats['policy_loss'] / save_every, steps)
-                writer.add_scalar('loss/dqn_loss', stats['dqn_loss'] / save_every, steps)
-                writer.add_scalar('loss/bc_loss', stats['bc_loss'] / save_every, steps)
-                writer.add_scalar('loss/next_rank_loss', stats['next_rank_loss'] / save_every, steps)
-                writer.add_scalar('loss/shanten_loss', stats['shanten_loss'] / save_every, steps)
-                writer.add_scalar('loss/fuuro_loss', stats['fuuro_loss'] / save_every, steps)
-                writer.add_scalar('loss/riichi_turn_loss', stats['riichi_turn_loss'] / save_every, steps)
+                writer.add_scalar('loss/v_loss', stats['v_loss'] / n_batches, steps)
+                writer.add_scalar('loss/policy_loss', stats['policy_loss'] / n_batches, steps)
+                writer.add_scalar('loss/dqn_loss', stats['dqn_loss'] / n_batches, steps)
+                writer.add_scalar('loss/bc_loss', stats['bc_loss'] / n_batches, steps)
+                writer.add_scalar('loss/next_rank_loss', stats['next_rank_loss'] / n_batches, steps)
+                writer.add_scalar('loss/shanten_loss', stats['shanten_loss'] / n_batches, steps)
+                writer.add_scalar('loss/fuuro_loss', stats['fuuro_loss'] / n_batches, steps)
+                writer.add_scalar('loss/riichi_turn_loss', stats['riichi_turn_loss'] / n_batches, steps)
                 writer.add_scalar('hparam/lr', scheduler.get_last_lr()[0], steps)
                 writer.add_histogram('q_predicted', all_q_1d, steps)
                 writer.add_histogram('q_target', all_q_target_1d, steps)
@@ -375,6 +379,9 @@ def train():
                 for k in stats:
                     stats[k] = 0
                 idx = 0
+
+                before_next_test_play = (test_every - steps % test_every) % test_every
+                logging.info(f'total steps: {steps:,} (~{before_next_test_play:,})')
 
                 state = {
                     'mortal': mortal.state_dict(),

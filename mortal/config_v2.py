@@ -62,7 +62,7 @@ config = {
         'bc_weight': 0.1,  # BC 监督权重，过拟合时调小
         'top_k': 2,  # top_k 模式的 BC 名次门槛，0 = 关闭 BC
         'bc_mode': 'kyoku_plus',  # BC 标记来源：kyoku_plus=所在小局得点为正，top_k=最终前 top_k 名
-        'bc_kyoku_threshold': 0,  # kyoku_plus 模式净得分阈值，1000 可滤除听牌料/本场棒噪声
+        'bc_kyoku_threshold': 3000,  # kyoku_plus 模式净得分阈值
         'init_from': 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth',  # state_file 不存在时热启动
     },
     'aux': {
@@ -72,9 +72,9 @@ config = {
         'riichi_turn_weight': 0.05,
     },
     'reward': {
-        'riichi': 0.15,
-        'agari': 0.5,
-        'houjuu': -0.15,
+        'riichi': 0.8,  # 与 kyoku 期望 pt 同量级，立直本身无直接收益故低于和牌
+        'agari': 3.0,
+        'houjuu': -2.0,  # 绝对值大于 riichi，立直后放铳净惩罚，抑制无谋立直
     },
     'optim': {
         'eps': 1e-8,

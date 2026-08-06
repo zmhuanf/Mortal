@@ -84,6 +84,8 @@ class FileDatasetsIter(IterableDataset):
     def populate_buffer(self, file_list):
         n_step = config['env'].get('n_step', 3)
         gamma = float(config['env']['gamma'])
+        # 预计算 γ^k 供 n 步内 turn 奖励折扣累加
+        gamma_pow = np.float32(gamma) ** np.arange(n_step + 1, dtype=np.float32)
         reward_cfg = config.get('reward', {})
         riichi_reward = float(reward_cfg.get('riichi', 0.0))
         agari_reward = float(reward_cfg.get('agari', 0.0))
@@ -149,14 +151,17 @@ class FileDatasetsIter(IterableDataset):
                         n_step_r = np.float32(gamma ** std * kyoku_rewards[at_kyoku[i]])
                         is_end = True
                         next_idx = i
+                        # 结束步 i+std 的 agari/houjuu 同样以 γ^std 计入
+                        horizon = std + 1
                     else:
                         n_step_r = np.float32(0.0)
                         is_end = False
                         # 从 i 起第 n_step 个 apply_gamma 步之后的 transition
                         next_idx = int(np.searchsorted(gamma_prefix, gamma_prefix[i] + n_step, side='left'))
                         next_idx = min(next_idx, game_size - 1)
-
-                    n_step_r += turn_rewards[i]
+                        horizon = n_step
+                    # 修复此前仅计当前步导致 n 步内 turn 奖励丢失
+                    n_step_r += np.float32(np.dot(gamma_pow[:horizon], turn_rewards[i:i + horizon]))
 
                     entry = [
                         obs[i],
