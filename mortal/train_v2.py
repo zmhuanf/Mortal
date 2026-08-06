@@ -25,6 +25,7 @@ def train():
     from common import submit_param, parameter_count, drain, tqdm, get_pool
     from player import TestPlayer
     from dataloader import FileDatasetsIter, worker_init_fn
+    from libriichi.dataset import GameplayLoader
     from lr_scheduler import LinearWarmUpCosineAnnealingLR
     from model import Brain, DQN, AuxNet
     from libriichi.consts import obs_shape
@@ -131,9 +132,8 @@ def train():
         target_mortal.load_state_dict(state['target_mortal'])
         target_dqn.load_state_dict(state['target_dqn'])
         optimizer.load_state_dict(state['optimizer'])
-        scheduler.load_state_dict(state['scheduler'])
-        # checkpoint 里的 lr_lambdas 是旧 pickle 调度，重绑当前 config 曲线
-        scheduler.lr_lambdas = [scheduler._step_inner] * len(optimizer.param_groups)
+        # 调度参数与曲线完全由当前 config 决定，只恢复训练步数进度
+        scheduler.last_epoch = state['scheduler']['last_epoch']
         scaler.load_state_dict(state['scaler'])
         best_perf = state['best_perf']
         if 'pool_version' not in best_perf:
@@ -191,6 +191,15 @@ def train():
 
         dirname = drain()
         selfplay_file_list = list(map(lambda p: path.join(dirname, p), os.listdir(dirname)))
+        total_self_files = len(selfplay_file_list)
+        # 抽样实测每文件样本数，供 save 时换算剩余文件
+        probe_loader = GameplayLoader(version=version, oracle=False, augmented=False)
+        sample_sizes = []
+        for f in random.sample(selfplay_file_list, min(3, total_self_files)):
+            per_file = sum(len(g.take_obs()) for gs in probe_loader.load_gz_log_files([f]) for g in gs)
+            sample_sizes.append(per_file)
+        samples_per_file = np.mean(sample_sizes) if sample_sizes else 0.0
+        epoch_start_steps = steps
 
         # 人类牌谱常驻，file_index 缓存 glob 构建结果
         human_file_index = config['dataset']['file_index']
@@ -206,7 +215,7 @@ def train():
         logging.info(f'self-play files: {len(selfplay_file_list):,}, human files: {len(human_file_list):,}')
 
         before_next_test_play = (test_every - steps % test_every) % test_every
-        logging.info(f'total steps: {steps:,} (~{before_next_test_play:,})')
+        logging.info(f'total steps: {steps:,} (~{before_next_test_play:,}) | self files: {total_self_files:,}')
 
         human_batch_size = max(1, int(batch_size * online_human_ratio))
         selfplay_batch_size = max(1, batch_size - human_batch_size)
@@ -268,6 +277,7 @@ def train():
             nonlocal pb
             nonlocal best_perf
             nonlocal last_pool_version
+            nonlocal epoch_start_steps, total_self_files, samples_per_file
 
             bs = obs.shape[0]
             obs = obs.to(dtype=torch.float32, device=device, non_blocking=True)
@@ -383,7 +393,9 @@ def train():
                 idx = 0
 
                 before_next_test_play = (test_every - steps % test_every) % test_every
-                logging.info(f'total steps: {steps:,} (~{before_next_test_play:,})')
+                self_left = (total_self_files - (steps - epoch_start_steps) * selfplay_batch_size / samples_per_file
+                             if samples_per_file > 0 else total_self_files)
+                logging.info(f'total steps: {steps:,} (~{before_next_test_play:,}) | self left: ~{self_left:,.0f} files')
 
                 state = {
                     'mortal': mortal.state_dict(),

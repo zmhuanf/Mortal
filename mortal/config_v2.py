@@ -48,7 +48,7 @@ config = {
         'num_workers': 2,
         'player_names_files': [],
         'num_epochs': 1,
-        'enable_augmentation': True,
+        'enable_augmentation': False,
         'augmented_first': False,
         'online_human_ratio': 0.3,
     },
