@@ -11,15 +11,15 @@ class RewardCalculator:
         self.pts = torch.tensor(pts, dtype=torch.float32, device=self.device)
 
     def calc_grp(self, grp_feature):
-        seq = list(map(
-            lambda idx: torch.as_tensor(grp_feature[:idx+1], device=self.device, dtype=torch.float32),
-            range(len(grp_feature)),
-        ))
-
         with torch.inference_mode():
-            logits = self.grp(seq)
-        matrix = self.grp.calc_matrix(logits)
-        return matrix
+            feat = torch.as_tensor(grp_feature, device=self.device, dtype=torch.float32)
+            n = feat.shape[0]
+            lengths = torch.arange(1, n + 1, device=self.device)
+            # 下三角掩码一次铺开全部前缀，免去逐前缀切片，n <= 12 内存可忽略
+            keep = torch.tril(torch.ones(n, n, dtype=torch.bool, device=self.device))
+            padded = feat.unsqueeze(0).expand(n, n, -1).masked_fill(~keep.unsqueeze(-1), 0.)
+            logits = self.grp.forward_padded(padded, lengths)
+        return self.grp.calc_matrix(logits)
 
     def calc_rank_prob(self, player_id, grp_feature, rank_by_player):
         matrix = self.calc_grp(grp_feature)

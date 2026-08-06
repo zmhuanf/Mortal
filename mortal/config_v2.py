@@ -43,9 +43,9 @@ config = {
     'dataset': {
         'globs': ['D:/Data/**/*.mjson'],
         'file_index': 'D:/Workspace/Mortal/mortal/mortal_v4/file_index.pth',
-        'file_batch_size': 15,
+        'file_batch_size': 8,
         'reserve_ratio': 0.0,
-        'num_workers': 2,
+        'num_workers': 4,
         'player_names_files': [],
         'num_epochs': 1,
         'enable_augmentation': False,

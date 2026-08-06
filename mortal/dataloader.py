@@ -190,6 +190,8 @@ class FileDatasetsIter(IterableDataset):
         return self.iterator
 
 def worker_init_fn(*args, **kwargs):
+    # 多 worker 各占全核推理互相拖慢，固定单线程
+    torch.set_num_threads(1)
     worker_info = torch.utils.data.get_worker_info()
     dataset = worker_info.dataset
     per_worker = int(np.ceil(len(dataset.file_list) / worker_info.num_workers))

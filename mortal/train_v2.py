@@ -217,16 +217,15 @@ def train():
         before_next_test_play = (test_every - steps % test_every) % test_every
         logging.info(f'total steps: {steps:,} (~{before_next_test_play:,}) | self files: {total_self_files:,}')
 
-        human_batch_size = max(1, int(batch_size * online_human_ratio))
-        selfplay_batch_size = max(1, batch_size - human_batch_size)
-
-        # 双 loader 按比例交错，self-play 全视角采样，对手动作一并进入行为分布
         # BC 标记字段由 bc_mode 决定，dataloader 只输出一个
         include_final_rank = bc_mode == 'top_k'
         include_kyoku_delta = bc_mode == 'kyoku_plus'
-        selfplay_data = FileDatasetsIter(
+        # 人类牌谱按比例抽样并入 self-play 单 loader，免去双 loader zip 互等
+        human_sample_size = round(len(selfplay_file_list) * online_human_ratio / (1 - online_human_ratio))
+        human_sample = random.sample(human_file_list, min(len(human_file_list), human_sample_size))
+        data = FileDatasetsIter(
             version = version,
-            file_list = selfplay_file_list,
+            file_list = selfplay_file_list + human_sample,
             pts = pts,
             file_batch_size = file_batch_size,
             reserve_ratio = reserve_ratio,
@@ -237,37 +236,15 @@ def train():
             include_final_rank = include_final_rank,
             include_kyoku_delta = include_kyoku_delta,
         )
-        human_data = FileDatasetsIter(
-            version = version,
-            file_list = human_file_list,
-            pts = pts,
-            file_batch_size = file_batch_size,
-            reserve_ratio = reserve_ratio,
-            player_names = [],
-            num_epochs = num_epochs,
-            enable_augmentation = enable_augmentation,
-            augmented_first = augmented_first,
-            include_final_rank = include_final_rank,
-            include_kyoku_delta = include_kyoku_delta,
-        )
-        selfplay_loader = iter(DataLoader(
-            dataset = selfplay_data,
-            batch_size = selfplay_batch_size,
+        data_loader = iter(DataLoader(
+            dataset = data,
+            batch_size = batch_size,
             drop_last = True,
             num_workers = num_workers,
             pin_memory = True,
+            prefetch_factor = 4,
             worker_init_fn = worker_init_fn,
         ))
-        human_loader = iter(DataLoader(
-            dataset = human_data,
-            batch_size = human_batch_size,
-            drop_last = True,
-            num_workers = num_workers,
-            pin_memory = True,
-            worker_init_fn = worker_init_fn,
-        ))
-        data_loader = (tuple(torch.cat([sp, hu], dim=0) for sp, hu in zip(sp_batch, hu_batch))
-                       for sp_batch, hu_batch in zip(selfplay_loader, human_loader))
 
         pb = tqdm(total=save_every, desc='TRAIN', initial=steps % save_every)
 
@@ -393,7 +370,9 @@ def train():
                 idx = 0
 
                 before_next_test_play = (test_every - steps % test_every) % test_every
-                self_left = (total_self_files - (steps - epoch_start_steps) * selfplay_batch_size / samples_per_file
+                # 混合 loader 按 self-play 文件占比折算剩余文件
+                selfplay_ratio = len(selfplay_file_list) / (len(selfplay_file_list) + len(human_sample))
+                self_left = (total_self_files - (steps - epoch_start_steps) * batch_size * selfplay_ratio / samples_per_file
                              if samples_per_file > 0 else total_self_files)
                 logging.info(f'total steps: {steps:,} (~{before_next_test_play:,}) | self left: ~{self_left:,.0f} files')
 
