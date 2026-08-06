@@ -1,12 +1,11 @@
-"""Called by setup_client.bat to patch conf paths and disable AMP"""
+"""Called by setup_client.bat to patch config_v2.py paths and disable AMP"""
 import os, re, sys
 
 root = sys.argv[1].replace('\\', '/')
 server_ip = sys.argv[2]
 device = sys.argv[3]
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-conf_dir = os.path.join(script_dir, 'conf')
+config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config_v2.py')
 
 def patch(filepath, replacements):
     with open(filepath, encoding='utf-8') as f:
@@ -16,26 +15,18 @@ def patch(filepath, replacements):
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(content)
 
-# base.toml: disable AMP, set device
-patch(os.path.join(conf_dir, 'base.toml'), [
-    (r"enable_amp\s*=\s*true", "enable_amp = false"),
-    (r"device\s*=\s*'cuda:\d+'", f"device = '{device}'"),
+# config_v2.py: disable AMP, set device, server IP, and local paths
+# device/state_file 多处存在，统一替换为目标机环境
+patch(config_path, [
+    (r"'enable_amp':\s*True", "'enable_amp': False"),
+    (r"'device':\s*'[^']*'", f"'device': '{device}'"),
+    (r"'host':\s*'[^']*'", f"'host': '{server_ip}'"),
+    (r"'log_dir':\s*'[^']*train_play[^']*'", f"'log_dir': '{root}/train_play'"),
+    (r"'buffer_dir':\s*'[^']*'", f"'buffer_dir': '{root}/buffer'"),
+    (r"'drain_dir':\s*'[^']*'", f"'drain_dir': '{root}/drain'"),
+    (r"'opponents_dir':\s*'[^']*'", f"'opponents_dir': '{root}/opponents'"),
+    (r"'state_file':\s*'[^']*baseline[^']*'", f"'state_file': '{root}/baseline_v1/mortal.pth'"),
 ])
 
-# online.toml: fix paths and server IP
-patch(os.path.join(conf_dir, 'online.toml'), [
-    (r"host\s*=\s*'[^']*'", f"host = '{server_ip}'"),
-    (r"log_dir\s*=\s*'[^']*'", f"log_dir = '{root}/train_play'"),
-    (r"buffer_dir\s*=\s*'[^']*'", f"buffer_dir = '{root}/buffer'"),
-    (r"drain_dir\s*=\s*'[^']*'", f"drain_dir = '{root}/drain'"),
-    (r"opponents_dir\s*=\s*'[^']*'", f"opponents_dir = '{root}/opponents'"),
-])
-
-# baseline.train.state_file in online.toml
-patch(os.path.join(conf_dir, 'online.toml'), [
-    (r"state_file\s*=\s*'[^']*baseline[^']*'",
-     f"state_file = '{root}/baseline_v1/mortal.pth'"),
-])
-
-print(f"  base.toml:    enable_amp=false, device={device}")
-print(f"  online.toml:  server={server_ip}, paths={root}/...")
+print(f"  config_v2.py: enable_amp=false, device={device}")
+print(f"  config_v2.py: server={server_ip}, paths={root}/...")

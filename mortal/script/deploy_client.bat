@@ -20,6 +20,7 @@ copy "%SRC%engine.py" "%OUT%" >nul || goto :fail
 copy "%SRC%model.py" "%OUT%" >nul || goto :fail
 copy "%SRC%common.py" "%OUT%" >nul || goto :fail
 copy "%SRC%config.py" "%OUT%" >nul || goto :fail
+copy "%SRC%config_v2.py" "%OUT%" >nul || goto :fail
 copy "%SRC%prelude.py" "%OUT%" >nul || goto :fail
 copy "%SRC%config.toml" "%OUT%" >nul || goto :fail
 copy "%SRC%setup_client.bat" "%OUT%" >nul || goto :fail

@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM Client environment setup script
-REM Patches conf paths to current directory, disables AMP
+REM Patches config_v2.py paths to current directory, disables AMP
 REM Usage: run setup_client.bat, then python client.py
 REM ============================================================
 

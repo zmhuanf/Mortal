@@ -21,6 +21,8 @@ class FileDatasetsIter(IterableDataset):
         num_epochs = 1,
         enable_augmentation = False,
         augmented_first = False,
+        include_final_rank = False,
+        include_kyoku_delta = False,
     ):
         super().__init__()
         self.version = version
@@ -34,6 +36,8 @@ class FileDatasetsIter(IterableDataset):
         self.num_epochs = num_epochs
         self.enable_augmentation = enable_augmentation
         self.augmented_first = augmented_first
+        self.include_final_rank = include_final_rank
+        self.include_kyoku_delta = include_kyoku_delta
         self.iterator = None
 
     def build_iter(self):
@@ -119,6 +123,7 @@ class FileDatasetsIter(IterableDataset):
                 assert len(kyoku_rewards) >= at_kyoku[-1] + 1 # usually they are equal, unless there is no action in the last kyoku
 
                 final_scores = grp.take_final_scores()
+                kyoku_deltas = self.reward_calc.calc_delta_points(player_id, grp_feature, final_scores)
                 scores_seq = np.concatenate((grp_feature[:, 3:7] * 1e4, [final_scores]))
                 rank_by_player_seq = (-scores_seq).argsort(-1, kind='stable').argsort(-1, kind='stable')
                 player_ranks = rank_by_player_seq[:, player_id]
@@ -168,6 +173,10 @@ class FileDatasetsIter(IterableDataset):
                     ]
                     if self.oracle:
                         entry.insert(1, invisible_obs[i])
+                    if self.include_final_rank:
+                        entry.append(np.int64(rank_by_player[player_id]))
+                    if self.include_kyoku_delta:
+                        entry.append(np.float32(kyoku_deltas[at_kyoku[i]]))
                     self.buffer.append(entry)
 
     def __iter__(self):

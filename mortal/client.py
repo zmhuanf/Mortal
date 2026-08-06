@@ -1,4 +1,5 @@
 import prelude
+import config_v2  # 注册 config 模块，使用 v2 单文件配置
 
 import logging
 import socket
