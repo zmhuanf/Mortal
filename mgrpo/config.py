@@ -23,7 +23,6 @@ class Reward:
 @dataclass(frozen=True)
 class Rollout:
     log_dir: Path = ROOT / 'rollout_logs'
-    seed_base: int = 10000
 
 
 @dataclass(frozen=True)

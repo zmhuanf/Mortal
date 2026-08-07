@@ -32,3 +32,7 @@ class OpponentPool:
             else torch.load(self.ckpt_dir / f'{name}.pth', weights_only=True, map_location='cpu')['model']
         )
         return Opponent(name, state)
+
+    def baseline_opponent(self) -> Opponent:
+        """固定参照对手，供定期强度评估"""
+        return Opponent(self.baseline_name, self.baseline)
