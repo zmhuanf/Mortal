@@ -98,7 +98,7 @@ config = {
             'top_p': 0.9,
             'temp_max': 1.0,
             'temp_min': 0.1,
-            'target_pt': 1.0,
+            'target_pt': 10,  # 明显强于 champion 才退火，避免过早收敛探索
             'repeats': 1,
         },
     },
