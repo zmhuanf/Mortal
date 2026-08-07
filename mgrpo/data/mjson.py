@@ -7,7 +7,7 @@ import numpy as np
 from libriichi.dataset import GameplayLoader
 
 from ..config import ENV
-from .reward import ranks_of
+from ..env.reward import ranks_of
 
 
 @dataclass
@@ -23,21 +23,21 @@ class Game:
 def iter_human_games(
     files: Sequence[Path],
     version: int = ENV.version,
-    limit: int | None = None,
+    batch_files: int = 20,
 ) -> Iterator[Game]:
-    """流式产出牌谱单局。player_names=None 时包含每局所有玩家的决策"""
+    """流式产出牌谱单局。分批加载防 load_gz_log_files 全量驻留内存"""
     loader = GameplayLoader(version=version)
-    for file_idx, file_games in enumerate(loader.load_gz_log_files([str(f) for f in files])):
-        if limit is not None and file_idx >= limit:
-            return
-        for game in file_games:
-            obs = np.stack(game.take_obs()).astype(np.float32)
-            if obs.shape[0] == 0:
-                continue
-            actions = np.asarray(game.take_actions(), dtype=np.int64)
-            masks = np.stack(game.take_masks())
-            grp = game.take_grp()
-            scores = np.asarray(grp.take_final_scores(), dtype=np.int32)
-            seat = game.take_player_id()
-            rank = ranks_of(scores.tolist())[seat]
-            yield Game(obs, actions, masks, scores, rank)
+    for start in range(0, len(files), batch_files):
+        batch = files[start : start + batch_files]
+        for file_games in loader.load_gz_log_files([str(f) for f in batch]):
+            for game in file_games:
+                obs = np.stack(game.take_obs()).astype(np.float32)
+                if obs.shape[0] == 0:
+                    continue
+                actions = np.asarray(game.take_actions(), dtype=np.int64)
+                masks = np.stack(game.take_masks())
+                grp = game.take_grp()
+                scores = np.asarray(grp.take_final_scores(), dtype=np.int32)
+                seat = game.take_player_id()
+                rank = ranks_of(scores.tolist())[seat]
+                yield Game(obs, actions, masks, scores, rank)

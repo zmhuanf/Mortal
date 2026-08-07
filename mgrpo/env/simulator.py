@@ -17,14 +17,14 @@ class Trajectory:
     obs: np.ndarray        # (T, C, 34) f32
     actions: np.ndarray    # (T,) i64
     masks: np.ndarray      # (T, A) bool
-    log_probs: np.ndarray  # (T,) f32，未记录时全 0
+    log_probs: np.ndarray  # (T,) f32，rollout 时刻策略对实际执行动作的概率
     scores: np.ndarray     # (4,) i32
     rank: int              # trainee 名次 1-4
     seed: tuple[int, int]
 
 
 def _parse_trajectory(log_file: Path, engine, seed: tuple[int, int], version: int) -> Trajectory:
-    """从单局 mjson 解析 trainee 轨迹，log_probs 取自引擎记录"""
+    """从单局 mjson 解析 trainee 轨迹，log_prob 用引擎权重对实际动作重算"""
     loader = GameplayLoader(version=version, player_names=['trainee'])
     games = loader.load_gz_log_files([str(log_file)])[0]
     game = games[0]
@@ -33,13 +33,11 @@ def _parse_trajectory(log_file: Path, engine, seed: tuple[int, int], version: in
     actions = np.asarray(game.take_actions(), dtype=np.int64)
     masks = np.stack(game.take_masks())
 
-    log_probs = getattr(engine, 'rollout_log_probs', None)
-    if log_probs is None:
-        # 引擎尚未实现 log_prob 记录时的开发期占位
-        log_probs = np.zeros(len(obs), dtype=np.float32)
-    else:
-        log_probs = np.asarray(log_probs, dtype=np.float32)
-        assert len(log_probs) == len(obs), f'log_probs {len(log_probs)} != obs {len(obs)}'
+    # arena 会替换采样动作（agari guard、kan 选择顺序），须按 mjson 实际动作取概率，否则 importance ratio 错位
+    with torch.inference_mode():
+        logits = engine.net(torch.as_tensor(obs)).masked_fill(~torch.as_tensor(masks), -torch.inf)
+        log_probs = logits.log_softmax(-1).gather(1, torch.as_tensor(actions).unsqueeze(-1)).squeeze(-1)
+    log_probs = log_probs.numpy().astype(np.float32)
 
     grp = game.take_grp()
     scores = np.asarray(grp.take_final_scores(), dtype=np.int32)
@@ -49,7 +47,7 @@ def _parse_trajectory(log_file: Path, engine, seed: tuple[int, int], version: in
 
 
 def play_one(engine, opponent, seed: tuple[int, int], log_dir: Path, version: int = ENV.version) -> Trajectory:
-    """执行单局 1v3。engine 需在 react_batch 时把所选动作的 log_prob 追加到 rollout_log_probs"""
+    """执行单局 1v3，log_prob 在解析时按实际执行动作重算"""
     shutil.rmtree(log_dir, ignore_errors=True)
     log_dir.mkdir(parents=True, exist_ok=True)
 

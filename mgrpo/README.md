@@ -13,8 +13,10 @@ mgrpo/
 │   └── simulator.py      # 单局 1v3 rollout → Trajectory
 ├── data/
 │   └── mjson.py          # 人类牌谱加载（BC 预训练）
-├── model/                # 待设计（网络结构讨论后实现）
+├── model/
+│   └── brain.py        # PolicyNet：406 万参数宽而浅 CNN，无价值头
 ├── agent/                # 待设计（GRPO 核心、rollout 器、对手池）
+├── train_bc.py         # BC 预训练入口（已完成）
 ├── train.py              # 待设计（训练循环）
 └── evaluate.py           # 待设计（benchmark 评估）
 ```
@@ -29,9 +31,8 @@ mgrpo/
 
 ## 待讨论的设计点
 
-1. **模型结构**：输入 `obs_shape(4) = (1012, 34)`（1012 通道 × 34 tile），输出 `ACTION_SPACE = 46`
-   - 倾向：宽而浅 1D CNN（少块、宽通道、GAP 尾部），GRPO 无需 critic 价值头
+1. **模型结构（已定）**：输入 `obs_shape(4) = (1012, 34)`，输出 `ACTION_SPACE = 46`。宽而浅 1D CNN：Stem(1012→256) + 12×ConvNeXtBlock(256, k3, FFN×2) + GAP + 512 隐藏 + policy head，**406 万参数、FLOPs ≈ 老模型 1/3，无价值头**（GRPO 无需 critic）
 2. **GRPO 组定义**：同局面 G 次采样（成本高）vs batch 内多局归一化（一局一组，排名即组内相对奖励）
-3. **奖励**：终局排名 `(90,45,0,-135)` 或局收支 shaping，是否引入 GRP
+3. **奖励（已定）**：`终局排名(90,45,0,-135) + λ×分数差shaping`，λ=1.0（<1.8 保证排名战略主导）。分数差与和牌得分挂钩，驱动立直追和风格；强进攻可后续加小局级 shaping
 4. **训练流程**：BC 预训练初始化 → 纯 self-play GRPO；rollout 单机多进程（worker 池）还是跨机
 5. **探索与 KL**：GRPO 对 reference 策略的 KL 约束系数、组内 advantage 归一化细节
