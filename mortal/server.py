@@ -144,9 +144,17 @@ class Handler(BaseRequestHandler):
     def handle_get_opponent(self, msg):
         # client 与 server 跨机时本地无权重文件，需按 id 传输对手权重原始字节
         with S.pool_lock:
-            state_file = S.pool_opponents[msg['id']]['state_file']
-        with open(state_file, 'rb') as f:
-            weights = f.read()
+            op = next((op for op in S.pool_opponents if op['id'] == msg['id']), None)
+            if op is None:
+                self.send_msg({'status': 'not found'})
+                return
+            state_file = op['state_file']
+        try:
+            with open(state_file, 'rb') as f:
+                weights = f.read()
+        except OSError:
+            self.send_msg({'status': 'not found'})
+            return
         # 直接传输原始字节，避免 torch.save 对大权重重复序列化导致内存峰值过高
         self.request.sendall(struct.pack('<Q', len(weights)))
         self.request.sendall(weights)
@@ -178,6 +186,7 @@ class Handler(BaseRequestHandler):
                 'meta': msg.get('meta') or {},
             })
             S.pool_version += 1
+            evict_weakest()
             write_index()
             meta = S.pool_opponents[-1]['meta']
             logging.info(
@@ -195,6 +204,19 @@ class Handler(BaseRequestHandler):
 
     def recv_msg(self):
         return recv_msg(self.request)
+
+def evict_weakest():
+    """池子超限时淘汰最弱的非 baseline 对手，baseline 永久保留"""
+    max_size = int(config['online']['pool'].get('max_size', 8))
+    while len(S.pool_opponents) > max_size:
+        candidates = [(i, op) for i, op in enumerate(S.pool_opponents) if i > 0]
+        if not candidates:
+            break
+        # 缺 avg_rank 的对手按最弱处理，优先淘汰
+        victim_i, victim = max(candidates, key=lambda t: t[1].get('meta', {}).get('avg_rank', float('inf')))
+        os.remove(victim['state_file'])
+        del S.pool_opponents[victim_i]
+        logging.info(f'opponent evicted: {victim["name"]} (avg_rank={victim.get("meta", {}).get("avg_rank")})')
 
 def write_index():
     index_file = path.join(S.opponents_dir, 'index.json')

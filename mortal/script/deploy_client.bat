@@ -12,6 +12,7 @@ if exist "%OUT%" rmdir /s /q "%OUT%"
 echo Creating layout ...
 mkdir "%OUT%\conf"
 mkdir "%OUT%\baseline_v1"
+mkdir "%OUT%\script"
 
 echo Copying python source ...
 copy "%SRC%client.py" "%OUT%" >nul || goto :fail
@@ -35,9 +36,13 @@ copy "%SRC%conf\*.toml" "%OUT%\conf" >nul || goto :fail
 echo Copying baseline checkpoint ...
 copy "%SRC%baseline_v1\mortal.pth" "%OUT%\baseline_v1" >nul || goto :fail
 
+echo Copying daemon script ...
+copy "%SRC%script\client_daemon.py" "%OUT%\script" >nul || goto :fail
+
 echo.
 echo Done. Deploy package is at: %OUT%
 echo On target machine: run setup_client.bat first, then python client.py
+echo Or keep it alive: python script\client_daemon.py
 exit /b 0
 
 :fail

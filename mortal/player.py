@@ -144,7 +144,8 @@ class TrainPlayer:
         self.train_seed = 10000
 
         self.seed_count = cfg['games'] // 4
-        self.boltzmann_epsilon = cfg['boltzmann_epsilon']
+        self.boltzmann_epsilon = cfg.get('eps_max', cfg.get('boltzmann_epsilon', 0.005))
+        self.eps_min = cfg.get('eps_min', self.boltzmann_epsilon)
         self.boltzmann_temp = cfg['boltzmann_temp']
         self.top_p = cfg['top_p']
         self.uncertainty_scale = config.get('dqn', {}).get('uncertainty_scale', 0)
@@ -164,14 +165,14 @@ class TrainPlayer:
         self.champion_engine = build_opponent_engine(state, self.champion_device, self.champion_compile, name)
         logging.info(f'champion switched to {name}')
 
-    def train_play(self, mortal, dqn, device, temperature=None):
+    def train_play(self, mortal, dqn, device, temperature=None, epsilon=None):
         torch.backends.cudnn.benchmark = False
         engine_chal = MortalEngine(
             mortal,
             dqn,
             is_oracle = False,
             version = self.chal_version,
-            boltzmann_epsilon = self.boltzmann_epsilon,
+            boltzmann_epsilon = self.boltzmann_epsilon if epsilon is None else epsilon,
             boltzmann_temp = self.boltzmann_temp,
             top_p = self.top_p,
             uncertainty_scale = self.uncertainty_scale,

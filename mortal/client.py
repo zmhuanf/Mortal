@@ -2,16 +2,16 @@ import prelude
 import config_v2  # 注册 config 模块，使用 v2 单文件配置
 
 import logging
+import random
 import socket
 import torch
 import numpy as np
 import time
 import gc
-from io import BytesIO
 from os import path
 from model import Brain, DQN
 from player import TrainPlayer
-from common import send_msg, recv_msg, get_pool, get_opponent, promote
+from common import send_msg, recv_msg, get_pool, get_opponent
 from config import config
 
 def main():
@@ -31,13 +31,8 @@ def main():
     pts = np.array([90, 45, 0, -135])
     history_window = config['online']['history_window']
     history = []
-
-    pool_cfg = config['online']['pool']
-    promote_avg_rank = pool_cfg['promote_avg_rank']
-    promote_min_sessions = pool_cfg['promote_min_sessions']
-    promote_cooldown = pool_cfg['promote_cooldown']
     champion_file = None
-    cooldown_left = 0
+    last_pool_version = -1
 
     while True:
         while True:
@@ -58,16 +53,23 @@ def main():
         logging.info('param has been updated')
 
         pool = get_pool()
-        current_opponent = pool['opponents'][-1]
         pool_version = pool['version']
+        if pool_version != last_pool_version:
+            # 对手池升级说明 trainee 已晋级，清空历史重置探索强度
+            history.clear()
+            last_pool_version = pool_version
+        current_opponent = random.choice(pool['opponents'])
         if current_opponent['state_file'] != champion_file:
             # 跨机时本地无权重文件，从 server 拉取对手权重
             rsp = get_opponent(current_opponent['id'])
-            state = torch.load(BytesIO(rsp['weights']), weights_only=True, map_location=device)
-            train_player.load_champion_state(state, current_opponent['name'])
+            if rsp.get('status') == 'not found':
+                logging.warning(f'opponent {current_opponent["name"]} evicted, re-fetching pool')
+                last_pool_version = -1
+                continue
+            train_player.load_champion_state(rsp['state'], current_opponent['name'])
             champion_file = current_opponent['state_file']
 
-        # 表现自适应探索温度，trainee 越强温度越低，首轮无历史用上限充分探索
+        # 表现自适应探索，trainee 越强温度与 epsilon 越低，首轮无历史用上限充分探索
         if history:
             sum_rankings = np.sum(history, axis=0)
             ma_avg_pt = sum_rankings @ pts / sum_rankings.sum()
@@ -76,9 +78,10 @@ def main():
             ma_avg_pt = -float('inf')
             progress = 0.
         temperature = train_player.temp_max * (train_player.temp_min / train_player.temp_max) ** progress
-        logging.info(f'exploration temperature: {temperature:.4f} (ma_avg_pt={ma_avg_pt:.4f})')
+        epsilon = train_player.boltzmann_epsilon * (train_player.eps_min / train_player.boltzmann_epsilon) ** progress
+        logging.info(f'exploration: temperature={temperature:.4f} epsilon={epsilon:.4f} (ma_avg_pt={ma_avg_pt:.4f})')
 
-        rankings, file_list = train_player.train_play(mortal, dqn, device, temperature)
+        rankings, file_list = train_player.train_play(mortal, dqn, device, temperature, epsilon)
         avg_rank = rankings @ np.arange(1, 5) / rankings.sum()
         avg_pt = rankings @ pts / rankings.sum()
 
@@ -91,24 +94,6 @@ def main():
 
         logging.info(f'trainee rankings: {rankings} ({avg_rank:.6}, {avg_pt:.6}pt)')
         logging.info(f'last {len(history)} sessions: {sum_rankings} ({ma_avg_rank:.6}, {ma_avg_pt:.6}pt)')
-
-        cooldown_left = max(0, cooldown_left - 1)
-        if len(history) >= promote_min_sessions and cooldown_left == 0 and ma_avg_rank < promote_avg_rank:
-            rsp = promote(mortal, dqn, {
-                'avg_rank': float(ma_avg_rank),
-                'avg_pt': float(ma_avg_pt),
-                'sessions': len(history),
-            }, pool_version=pool_version)
-            if rsp['status'] == 'stale':
-                logging.info(f'promote rejected: pool already updated to v{rsp["version"]}, resetting history')
-            else:
-                logging.info(
-                    f'promoted to opponent pool v{rsp["version"]}: {rsp["current"]["name"]} '
-                    f'(ma_avg_rank={ma_avg_rank:.6}, ma_avg_pt={ma_avg_pt:.6}pt)'
-                )
-                cooldown_left = promote_cooldown
-                champion_file = None
-            history.clear()
 
         logs = {}
         for filename in file_list:

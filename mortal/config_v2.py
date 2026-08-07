@@ -45,7 +45,7 @@ config = {
         'file_index': 'D:/Workspace/Mortal/mortal/mortal_v4/file_index.pth',
         'file_batch_size': 8,
         'reserve_ratio': 0.0,
-        'num_workers': 4,
+        'num_workers': 3,
         'player_names_files': [],
         'num_epochs': 1,
         'enable_augmentation': False,
@@ -92,7 +92,8 @@ config = {
         'default': {
             'games': 800,
             'log_dir': 'D:/Workspace/Mortal/mortal/mortal_v4/train_play',
-            'boltzmann_epsilon': 0.005,
+            'eps_max': 0.05,  # 探索率随 trainee 变强退火到 eps_min
+            'eps_min': 0.01,
             'boltzmann_temp': 0.05,
             'top_p': 0.9,
             'temp_max': 1.0,
@@ -116,9 +117,8 @@ config = {
         },
         'pool': {
             'opponents_dir': 'D:/Workspace/Mortal/mortal/mortal_v4/opponents',
-            'promote_avg_rank': 2.4,
-            'promote_min_sessions': 10,
-            'promote_cooldown': 20,
+            'max_size': 8,  # 池子超限淘汰最弱非 baseline 对手
+            'auto_promote': True,  # train_v2 评估相对上轮提升即晋级
         },
     },
     'baseline': {
@@ -134,7 +134,7 @@ config = {
         },
     },
     'test_play': {
-        'games': 1000,
+        'games': 2000,  # 1v3 评估噪声大，加局数稳定晋级判断
         'log_dir': 'D:/Workspace/Mortal/mortal/mortal_v4/test_play',
     },
     'grp': {

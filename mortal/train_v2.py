@@ -22,7 +22,7 @@ def train():
     from torch.utils.data import DataLoader
     from torch.utils.tensorboard import SummaryWriter
     from config import config
-    from common import submit_param, parameter_count, drain, tqdm, get_pool
+    from common import submit_param, parameter_count, drain, tqdm, get_pool, promote
     from player import TestPlayer
     from dataloader import FileDatasetsIter, worker_init_fn
     from libriichi.dataset import GameplayLoader
@@ -173,8 +173,9 @@ def train():
         'fuuro_loss': 0,
         'riichi_turn_loss': 0,
     }
-    all_q = torch.zeros((save_every, batch_size), device=device, dtype=torch.float32)
-    all_q_target = torch.zeros((save_every, batch_size), device=device, dtype=torch.float32)
+    # batch 大小因双 loader 交错可变，用 list 动态收集
+    all_q = []
+    all_q_target = []
     idx = 0
 
     def update_target():
@@ -192,8 +193,9 @@ def train():
         dirname = drain()
         selfplay_file_list = list(map(lambda p: path.join(dirname, p), os.listdir(dirname)))
         total_self_files = len(selfplay_file_list)
-        # 抽样实测每文件样本数，供 save 时换算剩余文件
-        probe_loader = GameplayLoader(version=version, oracle=False, augmented=False)
+        # 抽样实测每文件样本数，供 save 时换算剩余文件，只测 trainee 视角
+        probe_loader = GameplayLoader(version=version, oracle=False, augmented=False, player_names=['trainee'])
+        probe_full = GameplayLoader(version=version, oracle=False, augmented=False)
         sample_sizes = []
         for f in random.sample(selfplay_file_list, min(3, total_self_files)):
             per_file = sum(len(g.take_obs()) for gs in probe_loader.load_gz_log_files([f]) for g in gs)
@@ -212,6 +214,12 @@ def train():
                 human_file_list.extend(glob(pat, recursive=True))
             human_file_list.sort(reverse=True)
             torch.save({'file_list': human_file_list}, human_file_index)
+        # 实测人类牌谱单文件样本数，供抽样量按样本比例折算
+        human_sample_sizes = []
+        if human_file_list:
+            for f in random.sample(human_file_list, min(2, len(human_file_list))):
+                human_sample_sizes.append(sum(len(g.take_obs()) for gs in probe_full.load_gz_log_files([f]) for g in gs))
+        human_per_file = np.mean(human_sample_sizes) if human_sample_sizes else 0.0
         logging.info(f'self-play files: {len(selfplay_file_list):,}, human files: {len(human_file_list):,}')
 
         before_next_test_play = (test_every - steps % test_every) % test_every
@@ -220,31 +228,77 @@ def train():
         # BC 标记字段由 bc_mode 决定，dataloader 只输出一个
         include_final_rank = bc_mode == 'top_k'
         include_kyoku_delta = bc_mode == 'kyoku_plus'
-        # 人类牌谱按比例抽样并入 self-play 单 loader，免去双 loader zip 互等
-        human_sample_size = round(len(selfplay_file_list) * online_human_ratio / (1 - online_human_ratio))
+        # self-play 只进 trainee 自身视角，人类牌谱按比例抽样四家全进
+        human_batch_size = max(1, int(batch_size * online_human_ratio))
+        selfplay_batch_size = max(1, batch_size - human_batch_size)
+        # 按实测单文件样本量折算，self:human 总样本匹配 1-ratio:ratio，实测失败时回退文件数比例
+        human_ratio = online_human_ratio / (1 - online_human_ratio)
+        sample_scale = samples_per_file / human_per_file if samples_per_file > 0 and human_per_file > 0 else 1.0
+        human_sample_size = round(len(selfplay_file_list) * human_ratio * sample_scale)
         human_sample = random.sample(human_file_list, min(len(human_file_list), human_sample_size))
-        data = FileDatasetsIter(
+        logging.info(f'self {samples_per_file:.0f} samples/file, human {human_per_file:.0f} samples/file, sampling {human_sample_size} human files')
+        selfplay_data = FileDatasetsIter(
             version = version,
-            file_list = selfplay_file_list + human_sample,
+            file_list = selfplay_file_list,
             pts = pts,
             file_batch_size = file_batch_size,
             reserve_ratio = reserve_ratio,
-            player_names = [],
+            player_names = ['trainee'],
             num_epochs = num_epochs,
             enable_augmentation = enable_augmentation,
             augmented_first = augmented_first,
             include_final_rank = include_final_rank,
             include_kyoku_delta = include_kyoku_delta,
         )
-        data_loader = iter(DataLoader(
-            dataset = data,
-            batch_size = batch_size,
+        human_data = FileDatasetsIter(
+            version = version,
+            file_list = human_sample,
+            pts = pts,
+            file_batch_size = file_batch_size,
+            reserve_ratio = reserve_ratio,
+            num_epochs = num_epochs,
+            enable_augmentation = enable_augmentation,
+            augmented_first = augmented_first,
+            include_final_rank = include_final_rank,
+            include_kyoku_delta = include_kyoku_delta,
+        )
+        selfplay_loader = iter(DataLoader(
+            dataset = selfplay_data,
+            batch_size = selfplay_batch_size,
             drop_last = True,
             num_workers = num_workers,
             pin_memory = True,
             prefetch_factor = 4,
             worker_init_fn = worker_init_fn,
         ))
+        human_loader = iter(DataLoader(
+            dataset = human_data,
+            batch_size = human_batch_size,
+            drop_last = True,
+            num_workers = num_workers,
+            pin_memory = True,
+            prefetch_factor = 4,
+            worker_init_fn = worker_init_fn,
+        ))
+
+        def merged_batches():
+            # 双 loader 手动交错，一方先耗尽时另一方继续，免去 zip 提前截断
+            while True:
+                try:
+                    sp = next(selfplay_loader)
+                except StopIteration:
+                    sp = None
+                try:
+                    hu = next(human_loader)
+                except StopIteration:
+                    hu = None
+                if sp is None and hu is None:
+                    return
+                if sp is None or hu is None:
+                    yield sp or hu
+                else:
+                    yield tuple(torch.cat([a, b], dim=0) for a, b in zip(sp, hu))
+        data_loader = iter(merged_batches())
 
         pb = tqdm(total=save_every, desc='TRAIN', initial=steps % save_every)
 
@@ -323,8 +377,8 @@ def train():
                 stats['shanten_loss'] += shanten_loss
                 stats['fuuro_loss'] += fuuro_loss
                 stats['riichi_turn_loss'] += riichi_turn_loss
-                all_q[idx] = q.mean(-1)
-                all_q_target[idx] = q_target.mean(-1)
+                all_q.append(q.mean(-1))
+                all_q_target.append(q_target.mean(-1))
 
             steps += 1
             idx += 1
@@ -349,8 +403,10 @@ def train():
 
                 # 降采样减小 tensorboard 事件体积，断点续训首区间批数可能不足 save_every
                 n_batches = idx
-                all_q_1d = all_q[:n_batches].cpu().numpy().flatten()[::128]
-                all_q_target_1d = all_q_target[:n_batches].cpu().numpy().flatten()[::128]
+                all_q_1d = torch.cat(all_q).cpu().numpy()[::128]
+                all_q_target_1d = torch.cat(all_q_target).cpu().numpy()[::128]
+                all_q.clear()
+                all_q_target.clear()
 
                 writer.add_scalar('loss/v_loss', stats['v_loss'] / n_batches, steps)
                 writer.add_scalar('loss/policy_loss', stats['policy_loss'] / n_batches, steps)
@@ -370,9 +426,8 @@ def train():
                 idx = 0
 
                 before_next_test_play = (test_every - steps % test_every) % test_every
-                # 混合 loader 按 self-play 文件占比折算剩余文件
-                selfplay_ratio = len(selfplay_file_list) / (len(selfplay_file_list) + len(human_sample))
-                self_left = (total_self_files - (steps - epoch_start_steps) * batch_size * selfplay_ratio / samples_per_file
+                # 每步只消耗 selfplay_batch_size 个 self 样本，按实测单文件样本数折算剩余文件
+                self_left = (total_self_files - (steps - epoch_start_steps) * selfplay_batch_size / samples_per_file
                              if samples_per_file > 0 else total_self_files)
                 logging.info(f'total steps: {steps:,} (~{before_next_test_play:,}) | self left: ~{self_left:,.0f} files')
 
@@ -436,6 +491,24 @@ def train():
                             f'new best: {prev_avg_pt:.4}pt/{prev_avg_rank:.4} '
                             f'-> {avg_pt:.4}pt/{avg_rank:.4}'
                         )
+                        # 相对上轮评估提升即晋级，让 client 对战更强对手，驱动军备竞赛
+                        if config['online']['pool'].get('auto_promote', True):
+                            try:
+                                rsp = promote(mortal, dqn, {
+                                    'avg_rank': float(avg_rank),
+                                    'avg_pt': float(avg_pt),
+                                    'steps': steps,
+                                    'source': 'train_v2',
+                                }, pool_version=last_pool_version)
+                                if rsp['status'] == 'stale':
+                                    logging.info(f'promote rejected: pool already updated to v{rsp["version"]}')
+                                else:
+                                    logging.info(
+                                        f'promoted to opponent pool v{rsp["version"]}: {rsp["current"]["name"]} '
+                                        f'(avg_rank={avg_rank:.6}, avg_pt={avg_pt:.6}pt)'
+                                    )
+                            except Exception as ex:
+                                logging.warning(f'promote failed: {ex}')
 
                     logging.info(f'avg rank: {avg_rank:.6} (pool v{pool["version"]}, {len(results)} opponents)')
                     logging.info(f'avg pt: {avg_pt:.6}')
