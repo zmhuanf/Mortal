@@ -25,35 +25,28 @@ class GRPO:
 
     @staticmethod
     def compute_advantages(rewards: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-        """组内（batch 维度）归一化，日麻中一组 = 一轮 rollout 的若干局"""
+        """组内（batch 维度）归一化，日麻中一组 = 一轮 rollout 的全部局"""
         return (rewards - rewards.mean()) / (rewards.std() + eps)
 
-    def update(
-        self,
-        obs: torch.Tensor,
-        actions: torch.Tensor,
-        masks: torch.Tensor,
-        old_log_probs: torch.Tensor,
-        advantages: torch.Tensor,
-        game_ids: torch.Tensor,
-    ) -> dict[str, float]:
-        """按局分块梯度累积。obs 等大张量留 CPU 块内搬运，显存仅与 chunk_games 成正比
-        advantages 每局一个按 game_ids 广播到各步"""
-        device = next(self.policy.parameters()).device
-        advantages = advantages.to(device)
-
-        num_games = advantages.numel()
-        # 局内步连续且局号递增，位置区间才能直接对应局号区间
-        assert game_ids[0] == 0 and bool((game_ids[1:] >= game_ids[:-1]).all())
-
+    def begin(self, advantages: torch.Tensor):
+        """开启一轮梯度累积，advantages 为全局局级归一化值"""
+        self._adv = advantages.to(next(self.policy.parameters()).device)
+        self._num_games = advantages.numel()
+        self._offset = 0
+        self._loss = 0.0
+        self._total_steps = 0
+        self._clip_frac = self._kl_sum = self._ratio_sum = 0.0
         self.optimizer.zero_grad()
-        loss = 0.0
-        total_steps = 0
-        clip_frac = kl_sum = ratio_sum = 0.0
-        for start in range(0, num_games, self.chunk_games):
-            end = min(start + self.chunk_games, num_games)
-            sel = (game_ids >= start) & (game_ids < end)
-            ids = (game_ids[sel] - start).to(device)
+
+    def feed(self, obs, actions, masks, old_log_probs, game_ids):
+        """流式喂入一批轨迹（全局局号递增），按 chunk_games 分块累积梯度，obs 只驻留当前块"""
+        device = next(self.policy.parameters()).device
+        assert game_ids[0] == self._offset and bool((game_ids[1:] >= game_ids[:-1]).all())
+        end_g = int(game_ids[-1]) + 1
+        for lo in range(self._offset // self.chunk_games * self.chunk_games, end_g, self.chunk_games):
+            hi = min(lo + self.chunk_games, end_g)
+            sel = (game_ids >= lo) & (game_ids < hi)
+            ids = (game_ids[sel] - lo).to(device)
 
             obs_g = obs[sel].to(device, non_blocking=True)
             act_g = actions[sel].to(device, non_blocking=True)
@@ -68,31 +61,33 @@ class GRPO:
             # k3 无偏 KL 估计，约束策略不偏离 reference（BC 起点）
             kl = (ref_log_probs - log_probs).exp() - (ref_log_probs - log_probs) - 1
 
-            adv = advantages[start:end][ids]
+            adv = self._adv[lo:hi][ids]
             surr1 = ratio * adv
             surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * adv
             per_step = -(torch.min(surr1, surr2) - self.kl_beta * kl)
 
             # 一局内步级损失取均值，再对块内各局取均值；块间按局数加权等价于整批均值
-            counts = torch.bincount(ids, minlength=end - start)
-            sums = torch.zeros(end - start, dtype=per_step.dtype, device=device).scatter_add_(0, ids, per_step)
+            counts = torch.bincount(ids, minlength=hi - lo)
+            sums = torch.zeros(hi - lo, dtype=per_step.dtype, device=device).scatter_add_(0, ids, per_step)
             block_loss = (sums / counts).mean()
             block_loss.backward()
 
             with torch.inference_mode():
-                clip_frac += ((ratio - 1).abs() > self.clip_eps).float().sum().item()
-                kl_sum += kl.sum().item()
-                ratio_sum += ratio.sum().item()
-            loss += block_loss.item() * (end - start)
-            total_steps += sel.sum().item()
+                self._clip_frac += ((ratio - 1).abs() > self.clip_eps).float().sum().item()
+                self._kl_sum += kl.sum().item()
+                self._ratio_sum += ratio.sum().item()
+            self._loss += block_loss.item() * (hi - lo)
+            self._total_steps += sel.sum().item()
+        self._offset = end_g
 
+    def end(self) -> dict[str, float]:
+        """结束一轮：clip + step，返回统计"""
         nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
         self.optimizer.step()
-
         return {
-            'loss': loss / num_games,
-            'clip_frac': clip_frac / total_steps,
-            'kl': kl_sum / total_steps,
-            'ratio': ratio_sum / total_steps,
-            'adv_std': advantages.std().item(),
+            'loss': self._loss / self._num_games,
+            'clip_frac': self._clip_frac / self._total_steps,
+            'kl': self._kl_sum / self._total_steps,
+            'ratio': self._ratio_sum / self._total_steps,
+            'adv_std': self._adv.std().item(),
         }

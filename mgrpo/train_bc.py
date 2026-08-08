@@ -4,9 +4,16 @@ import glob
 import logging
 import os
 import random
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import mgrpo.prelude  # noqa: E402  注入 mortal/ 路径，使 libriichi.pyd 可导入
 
 import numpy as np
 import torch
@@ -141,14 +148,13 @@ def main():
             loss = F.cross_entropy(logits, actions)
         opt.zero_grad()
         scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
-
         if step % 100 == 0:
             scaler.unscale_(opt)
             grad_norm = sum(
                 (p.grad.norm() ** 2).item() for p in net.parameters() if p.grad is not None
             ) ** 0.5
+        scaler.step(opt)
+        scaler.update()
             now = time.perf_counter()
             samples_per_s = 100 * args.batch_size / (now - last_t)
             writer.add_scalar('bc/loss', loss.item(), step)

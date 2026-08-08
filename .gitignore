@@ -32,3 +32,6 @@ mortal/mortal_v3.2/
 mortal/mortal_v4/
 mgrpo/tb_bc/
 mgrpo/_verify_logs/
+mgrpo/tb_grpo/
+mgrpo/rollout_logs/
+mgrpo/_bench_logs/
