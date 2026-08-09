@@ -35,3 +35,7 @@ mgrpo/_verify_logs/
 mgrpo/tb_grpo/
 mgrpo/rollout_logs/
 mgrpo/_bench_logs/
+script/akagi_bridge/target/
+mortal_v5/log/
+mortal/mortal_v4_offline_baseline/
+mortal_v5/eval_play/

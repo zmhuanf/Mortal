@@ -10,11 +10,11 @@ import sys
 config = {
     'control': {
         'version': 4,
-        'online': True,  # 数据在线拉取，算法固定走 IQL
+        'online': False,  # 离线训练从人类牌谱读取数据，不连接 server
         'is_baseline': False,
-        'state_file': 'D:/Workspace/Mortal/mortal/mortal_v4/mortal.pth',
-        'best_state_file': 'D:/Workspace/Mortal/mortal/mortal_v4/best.pth',
-        'tensorboard_dir': 'D:/Workspace/Mortal/mortal/mortal_v4/log',
+        'state_file': 'D:/Workspace/Mortal/mortal/mortal_v4_offline_baseline/mortal.pth',
+        'best_state_file': 'D:/Workspace/Mortal/mortal/mortal_v4_offline_baseline/best.pth',
+        'tensorboard_dir': 'D:/Workspace/Mortal/mortal/mortal_v4_offline_baseline/log',
         'device': 'cuda:0',
         'enable_cudnn_benchmark': True,
         'enable_amp': True,
@@ -41,40 +41,42 @@ config = {
         'uncertainty_scale': 2.0,
     },
     'dataset': {
-        'globs': ['D:/Data/**/*.mjson'],
-        'file_index': 'D:/Workspace/Mortal/mortal/mortal_v4/file_index.pth',
+        'globs': ['D:/Data2/**/*.mjson'],
+        'file_index': 'D:/Workspace/Mortal/mortal/mortal_v4_offline_baseline/file_index.pth',
         'file_batch_size': 8,
         'reserve_ratio': 0.0,
         'num_workers': 3,
+        'prefetch_factor': 4,
+        'persistent_workers': True,
         'player_names_files': [],
         'num_epochs': 1,
-        'enable_augmentation': False,
+        'enable_augmentation': True,
         'augmented_first': False,
-        'online_human_ratio': 0.3,
+        'online_human_ratio': 1.0,
     },
     'iql': {
         'tau': 0.7,
-        'beta': 3.0,
-        'clip': 20.0,
-        'ema_decay': 0.995,
+        'beta': 4.0,
+        'clip': 10.0,
+        'ema_decay': 0.999,
     },
     'distill': {
-        'bc_weight': 0.1,  # BC 监督权重，过拟合时调小
-        'top_k': 2,  # top_k 模式的 BC 名次门槛，0 = 关闭 BC
+        'bc_weight': 0.0,  # 第一轮离线实验关闭粗粒度 BC 标签
+        'top_k': 0,  # 关闭 BC
         'bc_mode': 'kyoku_plus',  # BC 标记来源：kyoku_plus=所在小局得点为正，top_k=最终前 top_k 名
         'bc_kyoku_threshold': 3000,  # kyoku_plus 模式净得分阈值
         'init_from': 'D:/Workspace/Mortal/mortal/baseline_v1/mortal.pth',  # state_file 不存在时热启动
     },
     'aux': {
-        'next_rank_weight': 0.2,
-        'shanten_weight': 0.1,
-        'fuuro_weight': 0.05,
-        'riichi_turn_weight': 0.05,
+        'next_rank_weight': 0.1,
+        'shanten_weight': 0.03,
+        'fuuro_weight': 0.02,
+        'riichi_turn_weight': 0.02,
     },
     'reward': {
-        'riichi': 0.8,  # 与 kyoku 期望 pt 同量级，立直本身无直接收益故低于和牌
-        'agari': 3.0,
-        'houjuu': -2.0,  # 绝对值大于 riichi，立直后放铳净惩罚，抑制无谋立直
+        'riichi': 0.3,
+        'agari': 1.5,
+        'houjuu': -1.5,
     },
     'optim': {
         'eps': 1e-8,
@@ -82,10 +84,10 @@ config = {
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'scheduler': {
-            'peak': 1.5e-4,
-            'final': 1.5e-4,  # 与 peak 相同即 warmup 后恒定无 decay
-            'warm_up_steps': 5000,
-            'max_steps': 5000000,  # 计划总步数，超出后恒定为 final
+            'peak': 8e-5,
+            'final': 8e-5,  # 固定学习率
+            'warm_up_steps': 0,
+            'max_steps': 500000,
         },
     },
     'train_play': {
