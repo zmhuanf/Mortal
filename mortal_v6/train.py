@@ -199,6 +199,10 @@ def train_bc(mortal, q_head, event_model, aux_net, device, enable_amp):
     pb = tqdm(total=target, initial=steps, desc='BC', unit='batch', dynamic_ncols=True)
     stats = {'policy': 0., 'event': 0., 'next_rank': 0., 'shanten': 0., 'fuuro': 0., 'riichi_turn': 0.}
     n_batches = 0
+    # resume 恰落在评估步（上次崩于评估中途）时补一次评估
+    if steps and steps % eval_every == 0:
+        best_eval = maybe_eval(mortal, q_head, event_model, device, steps, best_eval,
+                               writer, state_file, best_state_file)
 
     while steps < target:
         try:
@@ -396,6 +400,10 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
     all_q = []
     all_q_target = []
     n_batches = 0
+    # resume 恰落在评估步（上次崩于评估中途）时补一次评估
+    if steps and steps % eval_every == 0:
+        best_eval = maybe_eval(mortal, q_head, event_model, device, steps, best_eval,
+                               writer, state_file, best_state_file)
 
     while steps < target:
         try:

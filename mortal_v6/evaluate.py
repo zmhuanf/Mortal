@@ -61,7 +61,8 @@ class SearchEngine(MortalEngine):
                 search_action(phi[i:i + 1], masks[i:i + 1], self.brain, self.dqn, self.event_model)
                 for i in range(phi.shape[0])
             ])
-        return actions.tolist(), actions.tolist(), masks.tolist(), [True] * phi.shape[0]
+            q_values = self.dqn(phi, masks)  # (N, A) 每样本定长值向量，供 Rust 侧解析
+        return actions.tolist(), q_values.tolist(), masks.tolist(), [True] * phi.shape[0]
 
 
 class GreedyQEngine(MortalEngine):
@@ -83,7 +84,7 @@ class GreedyQEngine(MortalEngine):
             candidates = logits.topk(k).indices  # (N, k)
             q = self.dqn(phi, masks)  # (N, A)
             best = candidates.gather(1, q.gather(1, candidates).argmax(-1, keepdim=True)).squeeze(-1)
-        return best.tolist(), best.tolist(), masks.tolist(), [True] * obs.shape[0]
+        return best.tolist(), q.tolist(), masks.tolist(), [True] * obs.shape[0]
 
 
 def build_engine(brain, q_head, event_model, device, name, *, action_mode='policy', greedy_top_k=3):
@@ -92,6 +93,7 @@ def build_engine(brain, q_head, event_model, device, name, *, action_mode='polic
             brain, q_head, event_model,
             is_oracle=False, version=4, device=device,
             enable_amp=False,  # 评估用 fp32 推理，数值最稳
+            enable_rule_based_agari_guard=True,
             name=name,
         )
     if action_mode == 'greedy':
@@ -99,12 +101,14 @@ def build_engine(brain, q_head, event_model, device, name, *, action_mode='polic
             brain, q_head, top_k=greedy_top_k,
             is_oracle=False, version=4, device=device,
             enable_amp=False,
+            enable_rule_based_agari_guard=True,
             name=name,
         )
     return MortalEngine(
         brain, q_head,
         is_oracle=False, version=4, device=device,
         enable_amp=False,
+        enable_rule_based_agari_guard=True,
         name=name,
         action_source='policy',
     )
@@ -123,6 +127,7 @@ def load_opponent(state_file, device, name):
         return MortalEngine(
             brain, dqn,
             is_oracle=False, version=4, device=device, enable_amp=False,
+            enable_rule_based_agari_guard=True,
             name=name, action_source='policy',
         )
     if 'model' in cfg:
@@ -136,6 +141,7 @@ def load_opponent(state_file, device, name):
         return MortalEngine(
             brain, dqn,
             is_oracle=False, version=4, device=device, enable_amp=False,
+            enable_rule_based_agari_guard=True,
             name=name, action_source='policy' if 'policy_head.weight' in state['mortal'] else 'q',
         )
     # v4 及更早对手
@@ -147,7 +153,8 @@ def load_opponent(state_file, device, name):
     return MortalEngine(
         brain, dqn,
         is_oracle=False, version=4, device=device, enable_amp=False,
-        name=name, action_source='q',
+        enable_rule_based_agari_guard=True,
+        name=name, action_source='policy' if 'policy_head.weight' in state['mortal'] else 'q',
     )
 
 

@@ -19,7 +19,7 @@ config = {
         'enable_compile': False,
         'batch_size': 64,
         'opt_step_every': 1,
-        'save_every': 500,
+        'save_every': 1000,
         'state_file': os.path.join(OUT_DIR, 'mortal.pth'),
         'best_state_file': os.path.join(OUT_DIR, 'best.pth'),
         'tensorboard_dir': os.path.join(OUT_DIR, 'log'),
@@ -71,14 +71,14 @@ config = {
     'train': {
         'stage': 'auto',  # auto 跟随 checkpoint 实际阶段，bc/xql 为强制指定
         # BC 等价 batch256 约 8.3 万步，XQL 10 万步（各含事件世界模型监督）
-        'bc_steps': 130000,
-        'xql_steps': 100000,
+        'bc_steps': 160000,
+        'xql_steps': 120000,
         'auto_proceed': True,
         'bc_peak': 3.75e-5,  # linear scaling：batch 256→64 的 0.25 倍
         'bc_final': 2.5e-6,
         'xql_peak': 1.25e-5,
         'xql_final': 2.5e-6,
-        'warm_up_steps': 10000,
+        'warm_up_steps': 5000,
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'betas': [0.9, 0.999],
@@ -86,7 +86,7 @@ config = {
     },
     'eval': {
         'games': 1000,
-        'eval_every': 10000,
+        'eval_every': 120000,
         'action_mode': 'search',  # search=想象搜索 / greedy=直出精排 / policy=纯策略
         'search_k': 8,            # 搜索候选动作数
         'greedy_top_k': 3,        # 直出精排候选动作数

@@ -26,8 +26,8 @@ def main():
         sys.exit(1)
     review_mode = os.environ.get('MORTAL_REVIEW_MODE', '0') == '1'
 
-    device = torch.device('cpu')
-    state = torch.load(config['control']['state_file'], weights_only=True, map_location=torch.device('cpu'))
+    device = torch.device(config['control'].get('device', 'cpu'))
+    state = torch.load(config['control']['state_file'], weights_only=True, map_location=torch.device('cpu'), mmap=True)
     cfg = state['config']
     version = cfg['control'].get('version', 4)
     resnet_cfg = cfg['resnet']
