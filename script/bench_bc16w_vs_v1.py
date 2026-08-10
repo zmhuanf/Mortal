@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 PTS = [90, 45, 0, -135]  # 半庄顺位赏
 KEY = 0x2A44  # 每局固定 second seed，与 --seed 组合保证可复现
-V6_CKPT = ROOT / 'mortal_v6' / 'out' / 'backup' / 'bc_16w.pth'
+V6_CKPT = ROOT / 'mortal_v6' / 'out' / 'mortal.pth'
 V1_CKPT = ROOT / 'mortal' / 'baseline_v1' / 'mortal.pth'
 V6_NAME = 'bc_16w'
 V1_NAME = 'mortal_v1'
