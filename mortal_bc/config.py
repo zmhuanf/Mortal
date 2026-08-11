@@ -11,8 +11,10 @@ config = {
         'device': 'cuda:0',
         'enable_cudnn_benchmark': True,
         'enable_amp': True,
-        'batch_size': 512,
-        'save_every': 200,
+        'batch_size': 256,
+        'opt_step_every': 2,  # 梯度累积，等效 batch 512，省显存
+        'log_every': 100,   # TensorBoard loss 写入间隔
+        'save_every': 1000,
         'eval_every': 20000,
         'state_file': os.path.join(OUT_DIR, 'mortal.pth'),
         'best_state_file': os.path.join(OUT_DIR, 'best.pth'),
@@ -20,8 +22,10 @@ config = {
         'eval_log_dir': os.path.join(OUT_DIR, 'eval_play'),
     },
     'model': {
-        'conv_channels': 192,
-        'num_blocks': 40,
+        'widths': [256, 512, 512],
+        'depths': [8, 8, 8],
+        'attn_layers': 6,
+        'attn_heads': 8,
         'layer_scale': 1e-6,
         'drop_rate': 0.0,
     },

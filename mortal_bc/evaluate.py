@@ -11,7 +11,7 @@ import torch
 from libriichi.arena import OneVsThree
 from libriichi.stat import Stat
 from config import config
-from model import Brain
+from model import Brain, LegacyBrain
 from engine import BcEngine
 
 # 顺位点，与原版评估口径一致
@@ -19,12 +19,12 @@ PTS = [90.0, 45.0, 0.0, -135.0]
 
 
 def load_opponent_engine(state_file, device, enable_amp):
-    """加载 baseline checkpoint 为 BcEngine，用 policy 选动作"""
+    """加载 baseline checkpoint 为 BcEngine，用 LegacyBrain 匹配旧架构"""
     s = torch.load(state_file, map_location='cpu', weights_only=True)
     cfg = s['config']
     version = cfg['control'].get('version', 4)
     resnet = cfg['resnet']
-    brain = Brain(
+    brain = LegacyBrain(
         version=version,
         conv_channels=resnet['conv_channels'],
         num_blocks=resnet['num_blocks'],

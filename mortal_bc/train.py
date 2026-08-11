@@ -131,7 +131,7 @@ def main():
     version = ctrl['version']
 
     mortal = Brain(version=version, **config['model']).to(device)
-    aux_net = AuxNet().to(device)
+    aux_net = AuxNet(phi_dim=config['model']['widths'][-1]).to(device)
     logging.info(f'mortal params: {parameter_count(mortal):,}')
     logging.info(f'aux params: {parameter_count(aux_net):,}')
 
@@ -161,6 +161,8 @@ def main():
     loader = make_loader(version)
     save_every = ctrl['save_every']
     eval_every = ctrl['eval_every']
+    log_every = ctrl['log_every']
+    opt_step_every = ctrl['opt_step_every']
     stats = {'ce': 0., 'next_rank': 0., 'shanten': 0., 'fuuro': 0., 'riichi': 0.}
     nb = 0
     pb = tqdm(desc='BC', unit='batch', dynamic_ncols=True, ascii=True)
@@ -208,17 +210,16 @@ def main():
         stats['riichi'] += l_rt.item()
         nb += 1
 
-        loss.backward()
-        if max_grad > 0:
-            clip_grad_norm_(chain.from_iterable(g['params'] for g in optimizer.param_groups), max_grad)
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
+        (loss / opt_step_every).backward()
         steps += 1
+        if steps % opt_step_every == 0:
+            if max_grad > 0:
+                clip_grad_norm_(chain.from_iterable(g['params'] for g in optimizer.param_groups), max_grad)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
         pb.update(1)
 
-        if steps % save_every == 0:
-            save_checkpoint(state_file, mortal=mortal, aux_net=aux_net,
-                            optimizer=optimizer, steps=steps, best_eval=best_eval)
+        if steps % log_every == 0:
             writer.add_scalar('loss/ce', stats['ce'] / nb, steps)
             writer.add_scalar('loss/next_rank', stats['next_rank'] / nb, steps)
             writer.add_scalar('loss/shanten', stats['shanten'] / nb, steps)
@@ -228,6 +229,10 @@ def main():
             for k in stats:
                 stats[k] = 0
             nb = 0
+
+        if steps % save_every == 0:
+            save_checkpoint(state_file, mortal=mortal, aux_net=aux_net,
+                            optimizer=optimizer, steps=steps, best_eval=best_eval)
 
         if steps % eval_every == 0:
             best_eval = do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_file, best_file)
