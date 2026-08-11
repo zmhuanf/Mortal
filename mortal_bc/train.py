@@ -158,11 +158,19 @@ def main():
         logging.info(f'resume from step {steps:,}')
 
     writer = SummaryWriter(ctrl['tensorboard_dir'])
-    loader = make_loader(version)
     save_every = ctrl['save_every']
     eval_every = ctrl['eval_every']
     log_every = ctrl['log_every']
     opt_step_every = ctrl['opt_step_every']
+
+    # 续训时若已跨过评估点却从未评估过，先补一次评估
+    if steps >= eval_every and best_eval is None:
+        logging.info(f'catch-up eval at step {steps:,} (missed first eval point)')
+        best_eval = do_eval(mortal, aux_net, optimizer, device, steps, best_eval,
+                            writer, state_file, best_file)
+        gc.collect()
+
+    loader = make_loader(version)
     stats = {'ce': 0., 'next_rank': 0., 'shanten': 0., 'fuuro': 0., 'riichi': 0.}
     nb = 0
     pb = tqdm(desc='BC', unit='batch', dynamic_ncols=True, ascii=True)

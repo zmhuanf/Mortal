@@ -57,7 +57,7 @@ config = {
         'max_grad_norm': 1.0,
     },
     'eval': {
-        'games': 2000,
+        'games': 1000,
         'opponent_state_file': BASELINE,
         'opponent_name': 'baseline_v1',
     },
