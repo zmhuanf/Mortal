@@ -1,5 +1,6 @@
 """牌谱数据加载：产出每步观测、动作、最终排名（加权用）与辅助标签"""
 import random
+import multiprocessing as mp
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
@@ -8,27 +9,50 @@ from config import config
 
 
 class FileDatasetsIter(IterableDataset):
-    def __init__(self, *, version, file_list, file_batch_size, num_epochs, enable_augmentation):
+    def __init__(self, *, version, file_list, file_batch_size, num_epochs,
+                 enable_augmentation, resume_files=0, shuffle_seed=42):
         super().__init__()
         self.version = version
         self.file_list = file_list
         self.file_batch_size = file_batch_size
         self.num_epochs = num_epochs
         self.enable_augmentation = enable_augmentation
+        self.shuffle_seed = shuffle_seed
         self.iterator = None
+        # 全局文件游标：worker 互斥消费，resume 时从保存值精确接续
+        self.cursor = mp.Value('q', resume_files)
 
     def build_iter(self):
+        # 每 epoch 先原始遍再增强遍，pass 序号决定 shuffle 种子与游标偏移
+        passes = []
         for _ in range(self.num_epochs):
-            yield from self._load_files(False)
+            passes.append(False)
             if self.enable_augmentation:
-                yield from self._load_files(True)
+                passes.append(True)
+        for pass_idx, augmented in enumerate(passes):
+            yield from self._load_files(augmented, pass_idx)
 
-    def _load_files(self, augmented):
-        random.shuffle(self.file_list)
+    def _load_files(self, augmented, pass_idx):
+        # 固定 seed 确定性 shuffle：resume 后顺序一致，游标精确对应已训位置
+        rng = random.Random(self.shuffle_seed ^ (pass_idx * 0x9E3779B9))
+        shuffled = rng.sample(self.file_list, len(self.file_list))
         loader = GameplayLoader(version=self.version, oracle=False, augmented=augmented)
         buffer = []
-        for start in range(0, len(self.file_list), self.file_batch_size):
-            for file in loader.load_gz_log_files(self.file_list[start:start + self.file_batch_size]):
+        total = len(shuffled)
+        base = pass_idx * total
+        while True:
+            # 读-判-推进原子化，越过本 pass 时不动游标以保留断点
+            with self.cursor.get_lock():
+                pos = self.cursor.value
+                start = pos - base
+                if start < 0 or start >= total:
+                    break
+                end = min(pos + self.file_batch_size, base + total)
+                self.cursor.value = end
+            files = shuffled[start:end - base]
+            if not files:
+                break
+            for file in loader.load_gz_log_files(files):
                 for game in file:
                     self._populate(game, buffer)
             random.shuffle(buffer)
@@ -70,11 +94,5 @@ class FileDatasetsIter(IterableDataset):
 
 
 def worker_init_fn(*_):
-    """多 worker 各占全核会互相拖慢，固定单线程并切分文件列表"""
+    """多 worker 各占全核会互相拖慢，固定单线程"""
     torch.set_num_threads(1)
-    info = torch.utils.data.get_worker_info()
-    if info is None:
-        return
-    ds = info.dataset
-    per = -(-len(ds.file_list) // info.num_workers)  # ceil div
-    ds.file_list = ds.file_list[info.id * per:(info.id + 1) * per]

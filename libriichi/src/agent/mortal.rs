@@ -44,6 +44,7 @@ struct SyncFields {
     masks: Vec<Array1<bool>>,
     action_idxs: Vec<usize>,
     kan_action_idxs: Vec<Option<usize>>,
+    indexes: Vec<usize>,
 }
 
 impl MortalBatchAgent {
@@ -85,6 +86,7 @@ impl MortalBatchAgent {
             masks: vec![],
             action_idxs: vec![0; size],
             kan_action_idxs: vec![None; size],
+            indexes: vec![],
         }));
 
         Ok(Self {
@@ -141,8 +143,9 @@ impl MortalBatchAgent {
                     .map(|v| PyArray2::from_owned_array(py, v))
                     .collect()
             });
+            let indexes: Vec<_> = sync_fields.indexes.drain(..).collect();
 
-            let args = (states, masks, invisible_states);
+            let args = (states, masks, invisible_states, indexes);
             self.engine
                 .bind_borrowed(py)
                 .call_method1(intern!(py, "react_batch"), args)
@@ -268,11 +271,13 @@ impl BatchAgent for MortalBatchAgent {
                 masks,
                 action_idxs,
                 kan_action_idxs,
+                indexes,
             } = &mut *sync_fields.lock();
             if let Some((kan_feature, kan_mask)) = kan {
                 kan_action_idxs[index] = Some(states.len());
                 states.push(kan_feature);
                 masks.push(kan_mask);
+                indexes.push(index);
                 if let Some(invisible_state) = invisible_state.clone() {
                     invisible_states.push(invisible_state);
                 }
@@ -281,6 +286,7 @@ impl BatchAgent for MortalBatchAgent {
             action_idxs[index] = states.len();
             states.push(feature);
             masks.push(mask);
+            indexes.push(index);
             if let Some(invisible_state) = invisible_state {
                 invisible_states.push(invisible_state);
             }

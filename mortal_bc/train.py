@@ -63,7 +63,7 @@ def build_optimizer(models):
     )
 
 
-def make_loader(version):
+def make_loader(version, resume_files=0):
     ds_cfg = config['dataset']
     ds = FileDatasetsIter(
         version=version,
@@ -71,6 +71,7 @@ def make_loader(version):
         file_batch_size=ds_cfg['file_batch_size'],
         num_epochs=ds_cfg['num_epochs'],
         enable_augmentation=ds_cfg['enable_augmentation'],
+        resume_files=resume_files,
     )
     kwargs = {
         'batch_size': config['control']['batch_size'],
@@ -83,22 +84,24 @@ def make_loader(version):
     if ds_cfg['num_workers'] > 0:
         kwargs['prefetch_factor'] = ds_cfg['prefetch_factor']
         kwargs['persistent_workers'] = ds_cfg['persistent_workers']
-    return iter(DataLoader(ds, **kwargs))
+    dl = DataLoader(ds, **kwargs)
+    return dl, iter(dl)
 
 
-def save_checkpoint(f, *, mortal, aux_net, optimizer, steps, best_eval):
+def save_checkpoint(f, *, mortal, aux_net, optimizer, steps, best_eval, data_offset):
     torch.save({
         'mortal': mortal.state_dict(),
         'aux_net': aux_net.state_dict(),
         'optimizer': optimizer.state_dict(),
         'steps': steps,
         'best_eval': best_eval,
+        'data_offset': data_offset,
         'timestamp': datetime.now().timestamp(),
         'config': config,
     }, f)
 
 
-def do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_file, best_file):
+def do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_file, best_file, data_offset):
     mortal.eval()
     r = run_eval(mortal, device)
     mortal.train()
@@ -113,7 +116,8 @@ def do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_
     if better:
         best_eval = {'avg_rank': avg_rank, 'avg_pt': avg_pt, 'steps': steps}
         save_checkpoint(state_file, mortal=mortal, aux_net=aux_net,
-                        optimizer=optimizer, steps=steps, best_eval=best_eval)
+                        optimizer=optimizer, steps=steps, best_eval=best_eval,
+                        data_offset=data_offset)
         shutil.copy(state_file, best_file)
         logging.info(f'new best: {avg_pt:.4f}pt / {avg_rank:.4f} rank @ {steps:,}')
     else:
@@ -143,6 +147,7 @@ def main():
 
     steps = 0
     best_eval = None
+    data_offset = 0
     state_file = ctrl['state_file']
     best_file = ctrl['best_state_file']
     if path.exists(state_file):
@@ -152,6 +157,7 @@ def main():
         optimizer.load_state_dict(s['optimizer'])
         steps = s['steps']
         best_eval = s.get('best_eval')
+        data_offset = s.get('data_offset', 0)
         # 固定 lr：续训时强制用当前 config 的 lr，忽略 checkpoint 内旧值
         for g in optimizer.param_groups:
             g['lr'] = config['optim']['lr']
@@ -167,10 +173,10 @@ def main():
     if steps >= eval_every and best_eval is None:
         logging.info(f'catch-up eval at step {steps:,} (missed first eval point)')
         best_eval = do_eval(mortal, aux_net, optimizer, device, steps, best_eval,
-                            writer, state_file, best_file)
+                            writer, state_file, best_file, data_offset)
         gc.collect()
 
-    loader = make_loader(version)
+    dl, loader = make_loader(version, resume_files=data_offset)
     stats = {'ce': 0., 'next_rank': 0., 'shanten': 0., 'fuuro': 0., 'riichi': 0.}
     nb = 0
     pb = tqdm(desc='BC', unit='batch', dynamic_ncols=True, ascii=True)
@@ -179,7 +185,8 @@ def main():
         try:
             batch = next(loader)
         except StopIteration:
-            loader = make_loader(version)
+            # 新 epoch 从头扫数据，游标归零而非延续累计值
+            dl, loader = make_loader(version, resume_files=0)
             logging.info(f'epoch done @ {steps:,}')
             continue
 
@@ -240,10 +247,12 @@ def main():
 
         if steps % save_every == 0:
             save_checkpoint(state_file, mortal=mortal, aux_net=aux_net,
-                            optimizer=optimizer, steps=steps, best_eval=best_eval)
+                            optimizer=optimizer, steps=steps, best_eval=best_eval,
+                            data_offset=dl.dataset.cursor.value)
 
         if steps % eval_every == 0:
-            best_eval = do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_file, best_file)
+            best_eval = do_eval(mortal, aux_net, optimizer, device, steps, best_eval, writer, state_file, best_file,
+                                dl.dataset.cursor.value)
             gc.collect()
 
 
