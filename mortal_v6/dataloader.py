@@ -82,6 +82,7 @@ class FileDatasetsIter(IterableDataset):
         agari_reward = float(reward_cfg.get('agari', 0.0))
         houjuu_reward = float(reward_cfg.get('houjuu', 0.0))
         score_scale = float(reward_cfg.get('score_scale', 1000.0))
+        reward_clip = float(reward_cfg.get('clip', 0.0))
         data = self.loader.load_gz_log_files(file_list)
         for file in data:
             for game in file:
@@ -119,6 +120,8 @@ class FileDatasetsIter(IterableDataset):
                 player_ranks = rank_by_player_seq[:, player_id]
                 # 局奖励 = 本家每局实际得分差分，无偏且不依赖额外模型
                 kyoku_rewards = (scores_seq[1:, player_id] - scores_seq[:-1, player_id]) / score_scale
+                if reward_clip > 0:
+                    kyoku_rewards = np.clip(kyoku_rewards, -reward_clip, reward_clip)
                 assert len(kyoku_rewards) >= at_kyoku[-1] + 1
 
                 steps_to_done = np.zeros(game_size, dtype=np.int64)

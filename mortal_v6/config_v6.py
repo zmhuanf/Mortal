@@ -26,7 +26,7 @@ config = {
     },
     'env': {
         'gamma': 0.99,
-        'n_step': 5,
+        'n_step': 8,  # 5→8：目标含更多真实 reward，减轻对自举的依赖
         'pts': [10.0, 4.0, -1.0, -5.0],
     },
     'model': {
@@ -56,11 +56,16 @@ config = {
         'weight': 0.1,  # BC 与 XQL 共用的事件监督权重
     },
     'xql': {
-        'tau': 0.9,    # Gumbel 加权，>0.5 时对正 TD 权重大（乐观，近似 max）
-        'beta': 4.0,   # 策略优势温度
-        'clip': 3.0,   # 优势 e 指数上限，防单样本权重失控
+        'tau': 0.6,            # 保守化：远离 0.9 的高估区，0.5 为无偏
+        'beta': 4.0,           # 策略优势温度
+        'clip': 3.0,           # 优势 e 指数上限，防单样本权重失控
         'ema_decay': 0.999,
-        'q_scale': 100.0,  # 放大 Q 平方损失量级，与 CE 损失平衡
+        'q_scale': 1.0,        # 原 100 会淹没策略/事件/aux 损失
+        'q_delta': 10.0,       # Q 回归 Huber 阈值，抗 TD 离群
+        'entropy_weight': 0.01,  # 策略熵正则，防 AWR 收窄分布
+        'lr': 1e-5,            # XQL 固定学习率，不做退火
+        'backbone_lr_ratio': 0.2,  # mortal 主干 lr 比例，保护 BC 表征
+        'head_lr_ratio': 5.0,      # q_head lr 比例，随机初始化起步需更快
     },
     'aux': {
         'next_rank_weight': 0.1,
@@ -69,7 +74,7 @@ config = {
         'riichi_turn_weight': 0.02,
     },
     'train': {
-        'stage': 'auto',  # auto 跟随 checkpoint 实际阶段，bc/xql 为强制指定
+        'stage': 'xql',  # auto 跟随 checkpoint 实际阶段，bc/xql 为强制指定
         # BC 等价 batch256 约 8.3 万步，XQL 10 万步（各含事件世界模型监督）
         'bc_steps': 160000,
         'xql_steps': 120000,
@@ -87,7 +92,7 @@ config = {
     'eval': {
         'games': 1000,
         'eval_every': 120000,
-        'action_mode': 'search',  # search=想象搜索 / greedy=直出精排 / policy=纯策略
+        'action_mode': 'policy',  # search=想象搜索 / greedy=直出精排 / policy=纯策略
         'search_k': 8,            # 搜索候选动作数
         'greedy_top_k': 3,        # 直出精排候选动作数
         'search_alpha': 0.5,      # Q 与 rollout 候选内标准化后的混合权重
@@ -113,6 +118,7 @@ config = {
         'agari': 1.5,
         'houjuu': -1.5,
         'score_scale': 1000.0,  # 局得分差分除以该值归一化
+        'clip': 5.0,            # 局奖励裁剪，防 Q 目标被 ±20+ 离群值拉大
     },
 }
 

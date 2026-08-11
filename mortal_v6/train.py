@@ -22,6 +22,7 @@ import torch
 from torch import optim, nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
@@ -39,11 +40,11 @@ def parameter_count(module):
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
-def build_optimizer(models):
-    """AdamW 分组：Linear/Conv1d 的 weight 走 weight_decay，其余不衰减"""
+def build_optimizer(models, *, lr=1.0, lr_ratios=None):
+    """AdamW 按模型分组：每组含 decay/no_decay，lr_ratios 按模型索引缩放 lr"""
     train_cfg = config['train']
-    decay, no_decay = [], []
-    for model in models:
+    groups = []
+    for i, model in enumerate(models):
         params_dict = {}
         to_decay = set()
         for mod_name, mod in model.named_modules():
@@ -51,12 +52,14 @@ def build_optimizer(models):
                 params_dict[name] = param
                 if isinstance(mod, (nn.Linear, nn.Conv1d)) and name.endswith('weight'):
                     to_decay.add(name)
-        decay.extend(params_dict[n] for n in sorted(to_decay))
-        no_decay.extend(params_dict[n] for n in sorted(params_dict.keys() - to_decay))
-    return optim.AdamW(
-        [{'params': decay, 'weight_decay': train_cfg['weight_decay']}, {'params': no_decay}],
-        lr=1, weight_decay=0, betas=train_cfg['betas'], eps=train_cfg['eps'],
-    )
+        ratio = (lr_ratios or {}).get(i, 1.0)
+        groups.append({
+            'params': [params_dict[n] for n in sorted(to_decay)],
+            'weight_decay': train_cfg['weight_decay'],
+            'lr': lr * ratio,
+        })
+        groups.append({'params': [params_dict[n] for n in sorted(params_dict.keys() - to_decay)], 'lr': lr * ratio})
+    return optim.AdamW(groups, betas=train_cfg['betas'], eps=train_cfg['eps'])
 
 
 def make_loader(version):
@@ -323,12 +326,13 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
     gamma_n = float(cfg['env']['gamma']) ** int(cfg['env']['n_step'])
     tau = xql_cfg['tau']
 
-    optimizer = build_optimizer([mortal, q_head, event_model, aux_net])
-    scheduler = LinearWarmUpCosineAnnealingLR(
-        optimizer,
-        peak=train_cfg['xql_peak'], final=train_cfg['xql_final'],
-        warm_up_steps=train_cfg['warm_up_steps'], max_steps=target,
+    optimizer = build_optimizer(
+        [mortal, q_head, event_model, aux_net],
+        lr=xql_cfg['lr'],
+        lr_ratios={0: xql_cfg['backbone_lr_ratio'], 1: xql_cfg['head_lr_ratio']},
     )
+    # 固定 lr：恒 1 缩放，不做 warmup/退火
+    scheduler = LambdaLR(optimizer, lr_lambda=lambda _: 1.0)
 
     from copy import deepcopy
     target_mortal = deepcopy(mortal).eval()
@@ -359,20 +363,23 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
             if 'optimizer' in state:
                 optimizer.load_state_dict(state['optimizer'])
                 scheduler.last_epoch = state['scheduler']['last_epoch']
+                # 旧 checkpoint 的 optimizer 带旧 lr，按当前 config 重设各组
+                for idx, ratio in ((0, xql_cfg['backbone_lr_ratio']), (1, xql_cfg['head_lr_ratio']),
+                                   (2, 1.0), (3, 1.0)):
+                    for g in optimizer.param_groups[2 * idx:2 * idx + 2]:
+                        g['lr'] = xql_cfg['lr'] * ratio
             steps = state.get('steps', 0)
             epoch = state.get('epoch', 0)
             best_eval = state.get('best_eval')
             logging.info(f'resume XQL from step {steps:,}')
         elif state['stage'] == 'bc':
-            # 手动切阶段：优先取 BC best，否则沿用最近 BC checkpoint
-            src = best_state_file if path.exists(best_state_file) else state_file
-            state = torch.load(src, weights_only=True, map_location=device)
+            # 手动切阶段：直接用 state_file 的 BC checkpoint 起步（不用 best）
             mortal.load_state_dict(state['mortal'])
             q_head.load_state_dict(state['q_head'])
             event_model.load_state_dict(state['event_model'])
             aux_net.load_state_dict(state['aux_net'])
             best_eval = state.get('best_eval')
-            logging.info('start XQL from BC checkpoint')
+            logging.info('start XQL from BC checkpoint (mortal.pth)')
     elif path.exists(best_state_file):
         # 无训练进度但存在 best：直接从 best 起步
         state = torch.load(best_state_file, weights_only=True, map_location=device)
@@ -392,10 +399,10 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
         target_q.load_state_dict(q_head.state_dict())
 
     ce = nn.CrossEntropyLoss()
-    writer = SummaryWriter(os.path.join(ctrl['tensorboard_dir'], 'xql'))
+    writer = SummaryWriter(os.path.join(ctrl['tensorboard_dir'], 'xql2'))
     loader = make_loader(version)
     pb = tqdm(total=target, initial=steps, desc='XQL', unit='batch', dynamic_ncols=True)
-    stats = {'q': 0., 'policy': 0., 'event': 0., 'next_rank': 0.,
+    stats = {'q': 0., 'policy': 0., 'entropy': 0., 'event': 0., 'next_rank': 0.,
              'shanten': 0., 'fuuro': 0., 'riichi_turn': 0.}
     all_q = []
     all_q_target = []
@@ -433,22 +440,27 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
             q_all = q_head(phi)  # (N, A)，未 mask 以保留基线计算
             q_a = q_all.gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
-            # Gumbel 加权回归：τ>0.5 对正 TD 权重大（乐观），直接学 Q 免去 V 中间步
+            # Huber 加权回归：τ<0.5 保守，Huber 抗 TD 离群，直接学 Q 免去 V 中间步
             with torch.no_grad():
                 next_phi = target_mortal(next_obs)
                 next_q_a = target_q(next_phi).gather(1, next_actions.unsqueeze(-1)).squeeze(-1)
                 q_target = rewards + gamma_n * next_q_a * (~is_end).float()
             td = q_target - q_a
             w = torch.where(td > 0, tau, 1 - tau)
-            q_loss = (w * td ** 2).mean() * xql_cfg['q_scale']
+            q_loss = (w * F.huber_loss(q_a, q_target, delta=xql_cfg['q_delta'], reduction='none')).mean() * xql_cfg['q_scale']
 
-            # AWR 式策略提取：基线取合法动作 Q 均值
+            # AWR 式策略提取：基线取合法动作 Q 均值，负优势权重固定 1 以维持 BC 频率
             with torch.no_grad():
                 q_masked = q_all.masked_fill(~masks, 0.)
                 baseline = q_masked.sum(-1) / masks.sum(-1).clamp_min(1)
-                exp_adv = ((q_a - baseline) / xql_cfg['beta']).clamp(max=xql_cfg['clip']).exp()
-            log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+                adv = (q_a - baseline) / xql_cfg['beta']
+                exp_adv = torch.where(adv > 0, adv.clamp(max=xql_cfg['clip']).exp(), torch.ones_like(adv))
+            policy_logits = mortal.policy_logits(phi)
+            log_probs = policy_logits.log_softmax(-1)
+            log_prob = log_probs.gather(1, actions.unsqueeze(-1)).squeeze(-1)
             policy_loss = -(exp_adv * log_prob).mean()
+            entropy = -(log_probs.exp() * log_probs).sum(-1).mean()
+            policy_loss = policy_loss - xql_cfg['entropy_weight'] * entropy
 
             event_loss = F.cross_entropy(
                 event_model(phi, actions).permute(0, 2, 1), event_traj, ignore_index=-1
@@ -470,6 +482,7 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
 
         stats['q'] += q_loss.item()
         stats['policy'] += policy_loss.item()
+        stats['entropy'] += entropy.item()
         stats['event'] += event_loss.item()
         stats['next_rank'] += next_rank_loss.item()
         stats['shanten'] += shanten_loss.item()
@@ -504,13 +517,14 @@ def train_xql(mortal, q_head, event_model, aux_net, device, enable_amp):
             all_q_target.clear()
             writer.add_scalar('loss/q', stats['q'] / n_batches, steps)
             writer.add_scalar('loss/policy', stats['policy'] / n_batches, steps)
+            writer.add_scalar('loss/entropy', stats['entropy'] / n_batches, steps)
             writer.add_scalar('loss/event', stats['event'] / n_batches, steps)
             writer.add_scalar('loss/next_rank', stats['next_rank'] / n_batches, steps)
             writer.add_scalar('loss/shanten', stats['shanten'] / n_batches, steps)
             writer.add_scalar('loss/fuuro', stats['fuuro'] / n_batches, steps)
             writer.add_scalar('loss/riichi_turn', stats['riichi_turn'] / n_batches, steps)
             writer.add_scalar('data/epoch', epoch, steps)
-            writer.add_scalar('hparam/lr', scheduler.get_last_lr()[0], steps)
+            writer.add_scalar('hparam/lr', xql_cfg['lr'], steps)
             writer.add_histogram('q_predicted', q_cat, steps)
             writer.add_histogram('q_target', q_target_cat, steps)
             writer.flush()
