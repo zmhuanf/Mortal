@@ -92,7 +92,7 @@ config = {
     'eval': {
         'games': 1000,
         'eval_every': 120000,
-        'action_mode': 'policy',  # search=想象搜索 / greedy=直出精排 / policy=纯策略
+        'action_mode': 'search',  # search=想象搜索 / greedy=直出精排 / policy=纯策略
         'search_k': 8,            # 搜索候选动作数
         'greedy_top_k': 3,        # 直出精排候选动作数
         'search_alpha': 0.5,      # Q 与 rollout 候选内标准化后的混合权重
