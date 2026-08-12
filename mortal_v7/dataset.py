@@ -143,7 +143,7 @@ def collate_batch(batch):
     obs_list, rtg_list, act_list, mask_list = zip(*batch)
     B = len(batch)
     T = max(o.shape[0] for o in obs_list)
-    obs = torch.zeros(B, T, *obs_list[0].shape[1:], dtype=torch.bfloat16)  # bf16 省显存，编码特征精度足够
+    obs = torch.zeros(B, T, *obs_list[0].shape[1:], dtype=getattr(torch, config['control']['amp_dtype']))  # 半精度省显存，编码特征精度足够
     rtg = torch.zeros(B, T, dtype=torch.float32)
     acts = torch.zeros(B, T, dtype=torch.int64)
     masks = torch.zeros(B, T, *mask_list[0].shape[1:], dtype=torch.bool)

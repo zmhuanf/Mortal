@@ -116,6 +116,8 @@ class DecisionTransformer(nn.Module):
         动作 embedding 右移一位：位置 3t+2 输入 a_{t-1} 预测 a_t，训练推理一致
         """
         B, T = obs.shape[:2]
+        # obs 对齐权重 dtype：AMP 关时 collate 的半精度 obs 才不会与 fp32 权重冲突
+        obs = obs.to(dtype=next(self.parameters()).dtype)
         phi = self.encoder(obs.flatten(0, 1)).view(B, T, -1)
         rtg_tok = self.rtg_proj(rtg.unsqueeze(-1))
         state_tok = self.state_proj(phi)

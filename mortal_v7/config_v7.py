@@ -16,6 +16,7 @@ config = {
         'device': 'cuda:0',
         'enable_cudnn_benchmark': True,
         'enable_amp': True,
+        'amp_dtype': 'float16',  # 1660S(Turing sm_75) 不支持 bf16，统一 fp16：精度高于 bf16、显存占用相同
         'enable_compile': False,
         'batch_size': 8,
         'save_every': 1000,

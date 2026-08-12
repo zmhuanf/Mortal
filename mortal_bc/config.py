@@ -32,9 +32,9 @@ config = {
     'dataset': {
         'globs': ['D:/Data/**/*.mjson', 'D:/Data2/**/*.mjson'],
         'file_index': os.path.join(OUT_DIR, 'file_index.pth'),
-        'file_batch_size': 8,
+        'file_batch_size': 1,  # 突发粒度=单文件解析，worker 交错产出样本，GPU 平滑
         'num_workers': 4,
-        'prefetch_factor': 4,
+        'prefetch_factor': 12,  # 队列缓冲加深，吸收解析方差形成的偶发间隙
         'persistent_workers': True,
         'num_epochs': 1,
         'enable_augmentation': True,

@@ -37,7 +37,6 @@ class FileDatasetsIter(IterableDataset):
         rng = random.Random(self.shuffle_seed ^ (pass_idx * 0x9E3779B9))
         shuffled = rng.sample(self.file_list, len(self.file_list))
         loader = GameplayLoader(version=self.version, oracle=False, augmented=augmented)
-        buffer = []
         total = len(shuffled)
         base = pass_idx * total
         while True:
@@ -52,23 +51,19 @@ class FileDatasetsIter(IterableDataset):
             files = shuffled[start:end - base]
             if not files:
                 break
+            # 边解析边产出单样本：worker 产出细粒度，多 worker 交错供给 GPU 平滑
             for file in loader.load_gz_log_files(files):
                 for game in file:
-                    self._populate(game, buffer)
-            random.shuffle(buffer)
-            yield from buffer
-            buffer.clear()
-        random.shuffle(buffer)
-        yield from buffer
+                    yield from self._populate(game)
 
-    @staticmethod
-    def _populate(game, buffer):
+    def _populate(self, game):
         obs = game.take_obs()
         if not obs:
             return
         grp = game.take_grp()
         feat = grp.take_feature()
-        if feat.shape[0] > 12:
+        # 15 局长局可达 16 行，防御性上限放宽到 32，避免长局样本被丢
+        if feat.shape[0] > 32:
             return
         player_id = game.take_player_id()
         final_rank = int(grp.take_rank_by_player()[player_id])
@@ -82,10 +77,8 @@ class FileDatasetsIter(IterableDataset):
         scores = np.concatenate((feat[:, 3:7] * 1e4, [grp.take_final_scores()]))
         rank_seq = (-scores).argsort(-1, kind='stable').argsort(-1, kind='stable')[:, player_id]
         for i in range(len(obs)):
-            buffer.append((
-                obs[i], actions[i], masks[i], final_rank,
-                int(rank_seq[at_kyoku[i] + 1]), int(shantens[i]), int(fuuro[i]), int(riichi[i]),
-            ))
+            yield (obs[i], actions[i], masks[i], final_rank,
+                   int(rank_seq[at_kyoku[i] + 1]), int(shantens[i]), int(fuuro[i]), int(riichi[i]))
 
     def __iter__(self):
         if self.iterator is None:

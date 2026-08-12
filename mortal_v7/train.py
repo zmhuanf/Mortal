@@ -120,7 +120,7 @@ def main():
         chunk = pending[:B]
         del pending[:B]
         obs, rtg, acts, masks, valid = collate_batch(chunk)
-        obs = obs.to(device=device, non_blocking=True)  # 保持 bf16 省显存
+        obs = obs.to(device=device, non_blocking=True)  # 保持半精度省显存
         rtg = rtg.to(device=device, non_blocking=True)
         acts = acts.to(device=device, non_blocking=True)
         valid = valid.to(device=device, non_blocking=True)

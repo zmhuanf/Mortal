@@ -14,19 +14,38 @@ from torch import nn
 
 import config_v7  # 注册 config 模块，必须先于 from config import config
 from config import config
-from model import DecisionTransformer, ConvNeXtEncoder
+from model import DecisionTransformer, ConvNeXtBlock, ConvNeXtEncoder
 from engine import MortalEngine
 from libriichi.arena import OneVsThree
 from libriichi.stat import Stat
 from libriichi.consts import obs_shape, ACTION_SPACE
 
 
+class _V4Encoder(nn.Module):
+    """旧版 v4 编码器壳：内部 net=Sequential，键名 encoder.net.* 与 checkpoint 严格一致"""
+
+    def __init__(self, in_channels, conv_channels, num_blocks, *, layer_scale=1e-6, drop_rate=0.0):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(in_channels, conv_channels, kernel_size=3, padding=1, bias=False),
+            *[ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
+              for _ in range(num_blocks)],
+            nn.Conv1d(conv_channels, 32, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Flatten(),
+            nn.Linear(32 * 34, 1024),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class V4Brain(nn.Module):
-    """baseline 等 v4 对手的策略网络：ConvNeXt 编码 + GELU + policy 头，与 mortal/model.py 一致"""
+    """baseline 等 v4 对手的策略网络：ConvNeXt 编码 + GELU + policy 头，与 mortal/model.py 键名对齐"""
 
     def __init__(self, *, conv_channels, num_blocks, layer_scale=1e-6, drop_rate=0.0, **kwargs):
         super().__init__()
-        self.encoder = ConvNeXtEncoder(
+        self.encoder = _V4Encoder(
             obs_shape(4)[0], conv_channels, num_blocks,
             layer_scale=layer_scale, drop_rate=drop_rate,
         )
@@ -82,7 +101,8 @@ def extract_kyoku_key(obs):
 
 class DTEngine:
     def __init__(self, model, device, *, name='mortal_v7', version=4,
-                 score_scale=10000.0, target_score=35000.0, window=96):
+                 score_scale=10000.0, target_score=35000.0, window=96, max_batch=1024,
+                 enable_forced_agari=True, enable_forced_riichi=True):
         self.engine_type = 'mortal'
         self.name = name
         self.is_oracle = False
@@ -90,30 +110,42 @@ class DTEngine:
         # 全部决策走模型，保证窗口序列完整
         self.enable_quick_eval = False
         self.enable_rule_based_agari_guard = True
+        # 训练类别失衡致模型从不主动和牌/立直，规则兜底恢复基础进攻能力
+        self.enable_forced_agari = enable_forced_agari
+        self.enable_forced_riichi = enable_forced_riichi
         self.device = device
         self.model = model.eval().to(device)
         self.score_scale = score_scale
         self.target_score = target_score
         self.window = window
+        self.max_batch = max_batch  # 批量前向上限，防 batch 过大撑爆显存
         self.games = {}  # index -> {obs/rtg/acts 双端队列, key: 局标识, rtg: 当前值}
 
     def _new_rtg(self, obs):
         own_score = extract_own_score(obs)
         return (self.target_score - own_score) / self.score_scale
 
-    def _forward_window(self, w):
-        obs = np.stack(w['obs'])  # (W, 1012, 34)
-        rtg = np.asarray(w['rtg'], dtype=np.float32)  # (W,)
-        acts = np.asarray(w['acts'], dtype=np.int64)  # (W,)，末位为待预测占位
-        obs_t = torch.from_numpy(obs).to(self.device).unsqueeze(0)
-        rtg_t = torch.from_numpy(rtg).to(self.device).unsqueeze(0)
-        acts_t = torch.from_numpy(acts).to(self.device).unsqueeze(0)
-        with torch.inference_mode(), torch.autocast(self.device.type, enabled=True):
-            logits = self.model(obs_t, rtg_t, acts_t)
-        return logits[0, -1].cpu().numpy()  # 最后动作位置 (A,)
+    def _forward_batch(self, windows):
+        """按窗口长度分组批量前向：同步推进下同批窗口长度一致，组内一次模型前向"""
+        groups: dict[int, list[int]] = {}
+        for i, w in enumerate(windows):
+            groups.setdefault(len(w['obs']), []).append(i)
+        logits = [None] * len(windows)
+        for idxs in groups.values():
+            for start in range(0, len(idxs), self.max_batch):
+                chunk = idxs[start:start + self.max_batch]
+                ws = [windows[i] for i in chunk]
+                obs_t = torch.from_numpy(np.stack([np.stack(w['obs']) for w in ws])).to(self.device)
+                rtg_t = torch.from_numpy(np.stack([np.asarray(w['rtg'], dtype=np.float32) for w in ws])).to(self.device)
+                acts_t = torch.from_numpy(np.stack([np.asarray(w['acts'], dtype=np.int64) for w in ws])).to(self.device)
+                with torch.inference_mode(), torch.autocast(self.device.type, enabled=True):
+                    out = self.model(obs_t, rtg_t, acts_t)  # (B', 3T, A)
+                for i, row in zip(chunk, out[:, -1].cpu().numpy()):
+                    logits[i] = row  # 每样本最后动作位置 (A,)
+        return logits
 
     def react_batch(self, obs, masks, invisible_obs, indexes=None):
-        actions, values, masks_out, is_greedy = [], [], [], []
+        batch = []
         for i, (o, m) in enumerate(zip(obs, masks)):
             idx = indexes[i] if indexes is not None else i
             w = self.games.setdefault(idx, {
@@ -134,12 +166,20 @@ class DTEngine:
             w['rtg'].append(w['rtg_val'])
             # 当前动作占位，模型 shift 后不看它；回填供下一步推理作为上一动作输入
             w['acts'].append(0)
+            batch.append((w, m))
 
-            logits = self._forward_window(w)
-            logits = np.where(np.asarray(m, dtype=bool), logits, -np.inf)
+        logits_rows = self._forward_batch([w for w, _ in batch])
+        actions, values, masks_out, is_greedy = [], [], [], []
+        for (w, m), logits in zip(batch, logits_rows):
+            mask = np.asarray(m, dtype=bool)
+            logits = np.where(mask, logits, -np.inf)
             a = int(np.argmax(logits))
+            # 43=hora 37=reach，mask 保证合法，能和不和是纯损失
+            if self.enable_forced_agari and mask[43]:
+                a = 43
+            elif self.enable_forced_riichi and mask[37]:
+                a = 37
             w['acts'][-1] = a
-
             actions.append(a)
             values.append(logits.tolist())
             masks_out.append(m.tolist())
