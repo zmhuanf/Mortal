@@ -71,6 +71,8 @@ def main():
     device = torch.device(config['control']['device'])
     torch.backends.cudnn.benchmark = config['control']['enable_cudnn_benchmark']
     enable_amp = config['control']['enable_amp']
+    # Blackwell 用 bf16（无 fp16 溢出风险），其余回退 fp16
+    amp_dtype = torch.bfloat16 if config['control'].get('amp_dtype', 'float16') == 'bfloat16' else torch.float16
     version = config['control']['version']
 
     mortal = Brain(version=version, **config['model']).to(device)
@@ -104,7 +106,7 @@ def main():
         {'params': decay_params, 'weight_decay': config['optim']['weight_decay']},
         {'params': no_decay_params},
     ], lr=1, weight_decay=0, betas=config['optim']['betas'], eps=config['optim']['eps'])
-    scaler = GradScaler(device.type, enabled=enable_amp)
+    scaler = GradScaler(device.type, enabled=enable_amp and amp_dtype == torch.float16)
 
     steps = 0
     data_offset = 0
@@ -125,7 +127,7 @@ def main():
         scaler.load_state_dict(state['scaler'])
         steps = state['steps']
         data_offset = state.get('data_offset', 0)
-        best_perf = state['best_perf']
+        best_perf = state.get('best_perf', best_perf)
         logging.info(f'resumed from step {steps} (data offset {data_offset})')
 
     optimizer.zero_grad(set_to_none=True)
@@ -214,7 +216,7 @@ def main():
         for g in optimizer.param_groups:
             g['lr'] = lr
 
-        with torch.autocast(device.type, enabled=enable_amp):
+        with torch.autocast(device.type, dtype=amp_dtype, enabled=enable_amp):
             phi = mortal(obs)
             q_out = dqn(phi, masks)  # (N, K, A)
             q = q_out[range(B), :, actions]  # (N, K)
@@ -270,7 +272,7 @@ def main():
 
     def record(losses):
         """统计 + 周期保存，循环与尾部补整共用"""
-        nonlocal n_batch
+        nonlocal n_batch, loss_sum
         n_batch += 1
         for k, v in zip(loss_sum, losses[1:]):
             loss_sum[k] += v.item()
@@ -331,10 +333,18 @@ def main():
             torch.save(best_state, best_state_file)
             logging.info(f'new best @{steps}: avg_rank {result["avg_rank"]:.4f} avg_pt {result["avg_pt"]:.4f}')
 
+    # 恢复后 best 仍为初始值（未验证）时，先按当前配方补一次评估
+    if eval_every > 0 and steps > 0 and best_perf['avg_rank'] >= 4.0:
+        logging.info(f'resume: best_perf unverified at step {steps}, evaluating now')
+        maybe_evaluate()
+
     # 尾部攒批补整：不足 batch 的块先缓存，凑满后切整批训练（同 baseline）
-    remaining = [[] for _ in range(11)]
+    remaining = None
     for batch_tensors in loader:
         if batch_tensors[0].shape[0] != B:
+            if remaining is None:
+                # 张量数量随 oracle 开关变化，按首个非整批动态初始化
+                remaining = [[] for _ in batch_tensors]
             for lst, t in zip(remaining, batch_tensors):
                 lst.append(t)
             continue
@@ -346,7 +356,7 @@ def main():
             break
 
     # 攒批尾部补整（剩余不足整批的丢弃）
-    if any(remaining[0]):
+    if remaining and any(remaining[0]):
         tail = [torch.cat(lst, dim=0) for lst in remaining]
         tail_bs = tail[0].shape[0]
         for start in range(0, tail_bs, B):

@@ -12,21 +12,47 @@ from torch import nn
 
 import config_base  # 注册 config 模块，必须先于 from config import config
 from config import config
-from model import Brain, DQN, ConvNeXtBlock
+from model import Brain, DQN
 from engine import MortalEngine
 from libriichi.arena import OneVsThree
 from libriichi.stat import Stat
 from libriichi.consts import obs_shape, ACTION_SPACE
 
 
+class _V4ConvNeXtBlock(nn.Module):
+    """baseline_v1 训练架构的 ConvNeXtBlock：k7 单 DWConv（与 mortal/model.py 一致）"""
+
+    def __init__(self, channels, *, layer_scale=1e-6, drop_rate=0.0):
+        super().__init__()
+        self.dwconv = nn.Conv1d(channels, channels, kernel_size=7, padding=3, groups=channels)
+        self.norm = nn.LayerNorm(channels)
+        self.pwconv1 = nn.Linear(channels, channels * 4)
+        self.actv = nn.GELU()
+        self.pwconv2 = nn.Linear(channels * 4, channels)
+        self.gamma = nn.Parameter(layer_scale * torch.ones(channels)) if layer_scale > 0 else None
+        self.drop = nn.Dropout(drop_rate) if drop_rate > 0 else nn.Identity()
+
+    def forward(self, x):
+        residual = x
+        x = self.dwconv(x)
+        x = self.norm(x.transpose(1, 2))
+        x = self.pwconv1(x)
+        x = self.actv(x)
+        x = self.pwconv2(x)
+        if self.gamma is not None:
+            x = self.gamma * x
+        x = self.drop(x)
+        return residual + x.transpose(1, 2)
+
+
 class _V4Encoder(nn.Module):
-    """旧版 v4 编码器壳：内部 net=Sequential，键名 encoder.net.* 与 checkpoint 严格一致"""
+    """baseline_v1 编码器：单阶段 ConvNeXt，键名 encoder.net.* 与 checkpoint 严格一致"""
 
     def __init__(self, in_channels, conv_channels, num_blocks, *, layer_scale=1e-6, drop_rate=0.0):
         super().__init__()
         self.net = nn.Sequential(
             nn.Conv1d(in_channels, conv_channels, kernel_size=3, padding=1, bias=False),
-            *[ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
+            *[_V4ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
               for _ in range(num_blocks)],
             nn.Conv1d(conv_channels, 32, kernel_size=3, padding=1),
             nn.GELU(),
@@ -80,9 +106,10 @@ class V4DQN(nn.Module):
 
 def make_engine(mortal, dqn, device, version, *, name='mortal_base', enable_amp=False):
     """用内存中的 mortal/dqn 构造挑战者引擎，train/eval 共用"""
+    amp_dtype = torch.bfloat16 if config['control'].get('amp_dtype', 'float16') == 'bfloat16' else torch.float16
     return MortalEngine(mortal, dqn, is_oracle=False, version=version, device=device,
                         enable_amp=enable_amp, enable_rule_based_agari_guard=True,
-                        name=name, action_source='policy')
+                        name=name, action_source='policy', amp_dtype=amp_dtype)
 
 
 def load_model(state_file, device):
@@ -91,7 +118,7 @@ def load_model(state_file, device):
     cfg = state['config']
     mortal = Brain(version=cfg['control']['version'], **cfg['model']).to(device).eval()
     mortal.load_state_dict(state['mortal'])
-    dqn = DQN(**cfg['dqn']).to(device).eval()
+    dqn = DQN(version=cfg['control']['version'], **cfg['dqn']).to(device).eval()
     dqn.load_state_dict(state['current_dqn'])
     return make_engine(mortal, dqn, device, cfg['control']['version'])
 

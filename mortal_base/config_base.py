@@ -15,9 +15,12 @@ config = {
         'version': 4,
         'device': 'cuda:0',
         'enable_cudnn_benchmark': True,
-        'enable_amp': True,  # 1660S(Turing sm_75) 不支持 bf16，统一 fp16
+        'enable_amp': True,  # 5050(Blackwell sm_120) 支持 bf16，统一 bfloat16
+        # 换回 1660S(Turing sm_75) 仅需改 amp_dtype='float16'：bf16 不支持，
+        # GradScaler 按 dtype 自动启用，batch/lr 与显卡无关无需动
+        'amp_dtype': 'bfloat16',
         'enable_compile': False,
-        'batch_size': 512,
+        'batch_size': 256,
         'save_every': 200,
         'state_file': os.path.join(OUT, 'mortal.pth'),
         'best_state_file': os.path.join(OUT, 'best.pth'),
@@ -67,9 +70,9 @@ config = {
     'dataset': {
         'globs': ['D:/Data/**/*.mjson', 'D:/Data2/**/*.mjson'],
         'file_index': os.path.join(OUT, 'file_index.pth'),
-        'file_batch_size': 15,
+        'file_batch_size': 1,  # v7 平滑参数：突发粒度=单文件，worker 交错产出，GPU 不饥饿
         'reserve_ratio': 0.0,
-        'num_workers': 2,
+        'num_workers': 4,  # v7 平滑参数：吞吐留富余，吸收解析方差
         'player_names_files': [],
         'prefetch_factor': 12,  # v7 工程参数：队列缓冲吸收解析方差
         'shuffle_seed': 42,  # v7 工程参数：确定性 shuffle，resume 顺序可复现
@@ -83,8 +86,8 @@ config = {
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'scheduler': {
-            'peak': 1.5e-4,
-            'final': 1.5e-4,
+            'peak': 7.5e-5,  # batch 减半，线性缩放法则 lr 同步减半
+            'final': 7.5e-5,
             'init': 1e-8,
             'warm_up_steps': 5000,
             'max_steps': 5000,

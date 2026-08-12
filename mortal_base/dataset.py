@@ -1,6 +1,8 @@
 """mortal_base 数据加载：baseline 配方 + v7 工程管线
 
-reward：GRP 预测排名概率 → 点位期望差分（calc_delta_pt）+ turn-level shaping（与 dataloader.py 逐行一致）
+reward：GRP 预测排名概率 → 点位期望差分（calc_delta_pt）+ turn-level shaping
+改进点（相对 dataloader.py）：n 步窗口按 apply_gamma 折扣步对齐而非 turn 索引；
+is_end 以游戏末而非局末为界，窗口内逐局计入结算奖励
 管线：v7 式全局游标 + 固定 seed 确定性 shuffle + worker 互斥交错消费
 """
 
@@ -81,6 +83,7 @@ class FileDatasetsIter(IterableDataset):
         self.grp.load_state_dict(grp_state['model'])
         self.reward_calc = RewardCalculator(self.grp, self.pts)
 
+        passes = []
         for _ in range(self.num_epochs):
             passes.append(self.augmented_first)
             if self.enable_augmentation:
@@ -162,13 +165,15 @@ class FileDatasetsIter(IterableDataset):
                 rank_by_player_seq = (-scores_seq).argsort(-1, kind='stable').argsort(-1, kind='stable')
                 player_ranks = rank_by_player_seq[:, player_id]
 
-                steps_to_done = np.zeros(T, dtype=np.int64)
+                # 到游戏末结算的折扣步数（含全部 turn），is_end 以游戏末而非局末为界
+                steps_to_done = np.zeros(T + 1, dtype=np.int64)
                 for i in reversed(range(T)):
-                    if not dones[i]:
-                        steps_to_done[i] = steps_to_done[i + 1] + int(apply_gamma[i])
+                    steps_to_done[i] = steps_to_done[i + 1] + int(apply_gamma[i])
 
                 # apply_gamma 前缀和，按折扣步数定位 next_idx 而非 transition 偏移
                 gamma_prefix = np.concatenate(([0], np.cumsum(np.asarray(apply_gamma, dtype=np.int64))))
+                # 局末 turn：结算奖励发生在局末 turn 动作之后
+                kyoku_end_turns = np.flatnonzero(dones)
 
                 turn_rewards = (
                     is_riichi_turn * riichi_reward
@@ -179,18 +184,26 @@ class FileDatasetsIter(IterableDataset):
                 for i in range(T):
                     std = steps_to_done[i]
                     if std < self.n_step:
-                        n_step_r = np.float32(self.gamma ** std * kyoku_rewards[at_kyoku[i]])
                         is_end = True
                         next_idx = i
-                        horizon = std + 1
+                        end = T
                     else:
-                        n_step_r = np.float32(0.0)
                         is_end = False
                         # 从 i 起第 n_step 个 apply_gamma 步之后的 transition
                         next_idx = int(np.searchsorted(gamma_prefix, gamma_prefix[i] + self.n_step, side='left'))
                         next_idx = min(next_idx, T - 1)
-                        horizon = self.n_step
-                    n_step_r += np.float32(np.dot(self.gamma_pow[:horizon], turn_rewards[i:i + horizon]))
+                        end = next_idx
+                    # turn 奖励按实际折扣步数折扣，非折扣步（副露/杠/和牌选择）不衰减
+                    n_step_r = np.float32(np.dot(
+                        self.gamma_pow[gamma_prefix[i:end] - gamma_prefix[i]],
+                        turn_rewards[i:end],
+                    ))
+                    # 局结算奖励：结算折扣步数在窗口内的局逐局计入
+                    for j in kyoku_end_turns[np.searchsorted(kyoku_end_turns, i, side='left'):]:
+                        discount = int(gamma_prefix[j + 1] - gamma_prefix[i])
+                        if discount >= self.n_step:
+                            break
+                        n_step_r += np.float32(self.gamma_pow[discount] * kyoku_rewards[at_kyoku[j]])
 
                     entry = [
                         obs[i],

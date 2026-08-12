@@ -20,6 +20,7 @@ class MortalEngine:
         version,
         device=None,
         enable_amp=False,
+        amp_dtype=torch.float16,
         enable_quick_eval=True,
         enable_rule_based_agari_guard=False,
         name='NoName',
@@ -40,6 +41,7 @@ class MortalEngine:
         self.num_heads = getattr(dqn, 'num_heads', 1)
 
         self.enable_amp = enable_amp
+        self.amp_dtype = amp_dtype
         self.enable_quick_eval = enable_quick_eval
         self.enable_rule_based_agari_guard = enable_rule_based_agari_guard
         self.name = name
@@ -54,7 +56,7 @@ class MortalEngine:
     def react_batch(self, obs, masks, invisible_obs, indexes=None):
         try:
             with (
-                torch.autocast(self.device.type, enabled=self.enable_amp),
+                torch.autocast(self.device.type, dtype=self.amp_dtype, enabled=self.enable_amp),
                 torch.inference_mode(),
             ):
                 return self._react_batch(obs, masks, invisible_obs)
