@@ -15,11 +15,9 @@ config = {
         'version': 4,
         'device': 'cuda:0',
         'enable_cudnn_benchmark': True,
-        'enable_amp': True,
-        'amp_dtype': 'float16',  # 1660S(Turing sm_75) 不支持 bf16，统一 fp16
+        'enable_amp': True,  # 1660S(Turing sm_75) 不支持 bf16，统一 fp16
         'enable_compile': False,
         'batch_size': 512,
-        'opt_step_every': 1,
         'save_every': 200,
         'state_file': os.path.join(OUT, 'mortal.pth'),
         'best_state_file': os.path.join(OUT, 'best.pth'),
@@ -54,20 +52,20 @@ config = {
     'iql': {
         'tau': 0.7,
         'beta': 3.0,
-        'clip': 20.0,
+        'clip': 3.0,  # exp_adv 权重上限：抑制 V 不准时的噪声优势放大，且防 fp16 溢出
         'ema_decay': 0.995,
     },
     'reward': {
-        'riichi': 0.15,
-        'agari': 0.5,
-        'houjuu': -0.15,
+        'riichi': 0.3,
+        'agari': 1.5,
+        'houjuu': -2.0,  # 放炮惩罚重于和牌奖励：送分 + 排名双输
     },
     'grp': {
         'state_file': 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth',
         'network': {'hidden_size': 128, 'num_layers': 2, 'nhead': 4},
     },
     'dataset': {
-        'globs': ['D:/Data/**/*.mjson'],
+        'globs': ['D:/Data/**/*.mjson', 'D:/Data2/**/*.mjson'],
         'file_index': os.path.join(OUT, 'file_index.pth'),
         'file_batch_size': 15,
         'reserve_ratio': 0.0,
@@ -84,7 +82,6 @@ config = {
         'betas': [0.9, 0.999],
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
-        'lr': 1,  # AdamW 初始 lr，实际由 scheduler 因子覆盖（同 baseline）
         'scheduler': {
             'peak': 1.5e-4,
             'final': 1.5e-4,
