@@ -78,6 +78,13 @@ class V4DQN(nn.Module):
         return q
 
 
+def make_engine(mortal, dqn, device, version, *, name='mortal_base', enable_amp=False):
+    """用内存中的 mortal/dqn 构造挑战者引擎，train/eval 共用"""
+    return MortalEngine(mortal, dqn, is_oracle=False, version=version, device=device,
+                        enable_amp=enable_amp, enable_rule_based_agari_guard=True,
+                        name=name, action_source='policy')
+
+
 def load_model(state_file, device):
     """加载 mortal_base 自身 checkpoint 为 challenger 引擎"""
     state = torch.load(state_file, weights_only=False, map_location=device)
@@ -86,9 +93,7 @@ def load_model(state_file, device):
     mortal.load_state_dict(state['mortal'])
     dqn = DQN(**cfg['dqn']).to(device).eval()
     dqn.load_state_dict(state['current_dqn'])
-    return MortalEngine(mortal, dqn, is_oracle=False, version=cfg['control']['version'],
-                        device=device, enable_rule_based_agari_guard=True, name='mortal_base',
-                        action_source='policy')
+    return make_engine(mortal, dqn, device, cfg['control']['version'])
 
 
 def load_opponent(state_file, device, name):

@@ -31,10 +31,16 @@ config = {
         'n_step': 5,
     },
     'model': {
-        'conv_channels': 192,
-        'num_blocks': 40,
+        'widths': (256, 384, 512),   # 三阶段通道递增
+        'depths': (8, 10, 6),        # 各阶段 ConvNeXt 块数
+        'kernel_sizes': (3, 9),      # 双尺度 DWConv：近邻搭子 + 花色内全段
         'layer_scale': 1e-6,
         'drop_rate': 0.0,
+        'drop_path_rate': 0.05,      # 大模型 stochastic depth 正则，随深度递增
+        'attn_layers': 2,            # 顶层全局关系层数
+        'attn_heads': 8,
+        'phi_dim': 1024,
+        'scalar_dim': 128,           # 标量分离流注入维度
     },
     'dqn': {
         'num_heads': 5,
@@ -88,7 +94,9 @@ config = {
         },
     },
     'train': {
-        'max_steps': 40000,
+        'max_steps': 200000,
+        'eval_every': 5000,   # 每 N 步 1v3 评估 vs baseline_v1
+        'eval_games': 100,    # 单次评估局数，评估耗时约 2-3 分钟
     },
     'eval': {
         'games': 1000,

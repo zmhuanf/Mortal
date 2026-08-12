@@ -30,6 +30,7 @@ import config_base  # 注册 config 模块，必须先于 from config import con
 from config import config
 from model import Brain, DQN, AuxNet
 from dataset import FileDatasetsIter, worker_init_fn
+from evaluate import make_engine, run_eval
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 
@@ -164,6 +165,10 @@ def main():
     gamma_n = config['env']['gamma'] ** config['env']['n_step']
     iql = config['iql']
     aux_w = config['aux']
+    eval_every = config['train']['eval_every']
+    eval_games = config['train']['eval_games']
+    best_state_file = config['control']['best_state_file']
+    eval_log_dir = config['eval']['log_dir']
     # 复刻 LinearWarmUpCosineAnnealingLR：LambdaLR 因子作用于 base lr=1
     sched = config['optim']['scheduler']
     init_lr, peak_lr = sched['init'], sched['peak']
@@ -297,6 +302,35 @@ def main():
             torch.save(state, state_file)
             logging.info(f'step {steps:,} | loss {losses[0].item():.4f}')
 
+    def maybe_evaluate():
+        """周期 1v3 评估 vs baseline_v1，超越历史最优则存 best.pth"""
+        nonlocal best_perf
+        mortal.eval()
+        dqn.eval()
+        engine = make_engine(mortal, dqn, device, version, enable_amp=True)
+        result = run_eval(engine, device, games=eval_games, log_dir=eval_log_dir)
+        mortal.train()
+        dqn.train()
+        writer.add_scalar('eval/avg_rank', result['avg_rank'], steps)
+        writer.add_scalar('eval/avg_pt', result['avg_pt'], steps)
+        writer.flush()
+        logging.info(f'eval @{steps}: avg_rank {result["avg_rank"]:.4f} avg_pt {result["avg_pt"]:.4f}')
+        if (result['avg_rank'] < best_perf['avg_rank']
+                or (result['avg_rank'] == best_perf['avg_rank'] and result['avg_pt'] > best_perf['avg_pt'])):
+            best_perf = {'avg_rank': result['avg_rank'], 'avg_pt': result['avg_pt'],
+                         'pool_version': best_perf['pool_version']}
+            best_state = {
+                'mortal': mortal.state_dict(),
+                'current_dqn': dqn.state_dict(),
+                'aux_net': aux_net.state_dict(),
+                'config': config,
+                'steps': steps,
+                'best_perf': best_perf,
+                'timestamp': datetime.now().timestamp(),
+            }
+            torch.save(best_state, best_state_file)
+            logging.info(f'new best @{steps}: avg_rank {result["avg_rank"]:.4f} avg_pt {result["avg_pt"]:.4f}')
+
     # 尾部攒批补整：不足 batch 的块先缓存，凑满后切整批训练（同 baseline）
     remaining = [[] for _ in range(11)]
     for batch_tensors in loader:
@@ -306,6 +340,8 @@ def main():
             continue
         losses = train_batch(*batch_tensors)
         record(losses)
+        if eval_every > 0 and steps % eval_every == 0:
+            maybe_evaluate()
         if steps >= config['train']['max_steps']:
             break
 
