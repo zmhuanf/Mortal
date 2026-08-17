@@ -21,7 +21,7 @@ config = {
         'amp_dtype': 'bfloat16',
         'enable_compile': False,
         'batch_size': 256,
-        'save_every': 200,
+        'save_every': 500,
         'state_file': os.path.join(OUT, 'mortal.pth'),
         'best_state_file': os.path.join(OUT, 'best.pth'),
         'tensorboard_dir': os.path.join(OUT, 'log'),
@@ -74,7 +74,7 @@ config = {
         'reserve_ratio': 0.0,
         'num_workers': 4,  # v7 平滑参数：吞吐留富余，吸收解析方差
         'player_names_files': [],
-        'prefetch_factor': 12,  # v7 工程参数：队列缓冲吸收解析方差
+        'prefetch_factor': 4,  # 缓冲 = workers×2 = 8 batch，控制共享内存驻留防 Windows 页面文件 1455
         'shuffle_seed': 42,  # v7 工程参数：确定性 shuffle，resume 顺序可复现
         'num_epochs': 1,
         'enable_augmentation': True,
@@ -86,15 +86,16 @@ config = {
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'scheduler': {
-            'peak': 7.5e-5,  # batch 减半，线性缩放法则 lr 同步减半
-            'final': 7.5e-5,
+            'peak': 3e-6,
+            'final': 3e-6,
             'init': 1e-8,
             'warm_up_steps': 5000,
             'max_steps': 5000,
         },
     },
     'train': {
-        'max_steps': 200000,
+        'max_steps': 600000,
+        'post_training': True,  # 后训练：随机读文件 + 无步数上限，Ctrl+C 手动停止
         'eval_every': 5000,   # 每 N 步 1v3 评估 vs baseline_v1
         'eval_games': 100,    # 单次评估局数，评估耗时约 2-3 分钟
     },

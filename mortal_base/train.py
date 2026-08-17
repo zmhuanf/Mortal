@@ -137,6 +137,8 @@ def main():
     file_list = build_file_list(set(player_names))
     logging.info(f'offline files: {len(file_list):,}')
     ds_cfg = config['dataset']
+    post_training = config['train'].get('post_training', False)
+    max_steps = config['train']['max_steps']
     data = FileDatasetsIter(
         version=version,
         file_list=file_list,
@@ -149,6 +151,7 @@ def main():
         augmented_first=ds_cfg['augmented_first'],
         resume_files=data_offset,
         shuffle_seed=ds_cfg.get('shuffle_seed', 42),
+        random_files=post_training,
     )
     loader_kwargs = {
         'batch_size': config['control']['batch_size'],
@@ -268,7 +271,7 @@ def main():
     import random
     loss_sum = {k: 0.0 for k in ('v', 'policy', 'dqn', 'next_rank', 'shanten', 'fuuro', 'riichi_turn')}
     n_batch = 0
-    pb = tqdm(total=config['train']['max_steps'], initial=steps, desc='TRAIN', unit='step')
+    pb = tqdm(total=None if post_training else max_steps, initial=steps, desc='TRAIN', unit='step')
 
     def record(losses):
         """统计 + 周期保存，循环与尾部补整共用"""
@@ -352,7 +355,7 @@ def main():
         record(losses)
         if eval_every > 0 and steps % eval_every == 0:
             maybe_evaluate()
-        if steps >= config['train']['max_steps']:
+        if not post_training and steps >= max_steps:
             break
 
     # 攒批尾部补整（剩余不足整批的丢弃）
@@ -364,7 +367,7 @@ def main():
                 break
             losses = train_batch(*[c[start:start + B] for c in tail])
             record(losses)
-            if steps >= config['train']['max_steps']:
+            if not post_training and steps >= max_steps:
                 break
     pb.close()
     logging.info(f'training done at step {steps}')

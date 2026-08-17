@@ -53,7 +53,7 @@ class FileDatasetsIter(IterableDataset):
     def __init__(self, version, file_list, pts, *, oracle=False, file_batch_size=20,
                  reserve_ratio=0, player_names=None, excludes=None, num_epochs=1,
                  enable_augmentation=False, augmented_first=False, resume_files=0,
-                 shuffle_seed=42):
+                 shuffle_seed=42, random_files=False):
         super().__init__()
         self.version = version
         self.file_list = file_list
@@ -66,6 +66,7 @@ class FileDatasetsIter(IterableDataset):
         self.num_epochs = num_epochs
         self.enable_augmentation = enable_augmentation
         self.augmented_first = augmented_first
+        self.random_files = random_files
         self.n_step = config['env']['n_step']
         self.gamma = float(config['env']['gamma'])
         self.reward_cfg = config['reward']
@@ -82,6 +83,23 @@ class FileDatasetsIter(IterableDataset):
         grp_state = torch.load(config['grp']['state_file'], weights_only=True, map_location=torch.device('cpu'))
         self.grp.load_state_dict(grp_state['model'])
         self.reward_calc = RewardCalculator(self.grp, self.pts)
+
+        if self.random_files:
+            # 后训练：无限有放回随机取文件，无 epoch/游标语义
+            rng = random.Random()
+            self.buffer_rng = random.Random()
+            self.loader = GameplayLoader(
+                version=self.version,
+                oracle=self.oracle,
+                player_names=self.player_names,
+                excludes=self.excludes,
+                augmented=self.augmented_first,
+            )
+            self.buffer = []
+            while True:
+                files = rng.sample(self.file_list, self.file_batch_size)
+                yield from self.populate_buffer(files)
+            return
 
         passes = []
         for _ in range(self.num_epochs):
