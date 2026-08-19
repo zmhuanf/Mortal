@@ -70,8 +70,8 @@ class FileDatasetsIter(IterableDataset):
         self.n_step = config['env']['n_step']
         self.gamma = float(config['env']['gamma'])
         self.reward_cfg = config['reward']
-        # 预计算 γ^k 供 n 步内 turn 奖励折扣累加
-        self.gamma_pow = np.float32(self.gamma) ** np.arange(self.n_step + 1, dtype=np.float32)
+        # 预计算 γ^k 供 n 步内 turn 奖励折扣累加 + A 头整局结算折现（长链）
+        self.gamma_pow = np.float32(self.gamma) ** np.arange(512 + 1, dtype=np.float32)
         self.shuffle_seed = shuffle_seed
         self.iterator = None
         # 全局文件游标：worker 互斥消费，resume 时从保存值精确接续
@@ -176,6 +176,8 @@ class FileDatasetsIter(IterableDataset):
                 rank_by_player = grp.take_rank_by_player()
                 kyoku_rewards = self.reward_calc.calc_delta_pt(player_id, grp_feature, rank_by_player)
                 assert len(kyoku_rewards) >= at_kyoku[-1] + 1
+                # 终局锚定：该玩家本局真实最终排名 pts，局末 turn 用它代替 bootstrap 目标
+                final_pts = np.float32(self.pts[rank_by_player[player_id]])
 
                 # 局序排名序列：局初分数 + 终局分排序，aux 预测下一局排名用
                 final_scores = grp.take_final_scores()
@@ -190,8 +192,17 @@ class FileDatasetsIter(IterableDataset):
 
                 # apply_gamma 前缀和，按折扣步数定位 next_idx 而非 transition 偏移
                 gamma_prefix = np.concatenate(([0], np.cumsum(np.asarray(apply_gamma, dtype=np.int64))))
-                # 局末 turn：结算奖励发生在局末 turn 动作之后
+                # 局末 turn 列表（dones=1 处），第 k 个即局 k 的结束
                 kyoku_end_turns = np.flatnonzero(dones)
+                # A 头事件回报：本局结算按到局末的折扣步数折现回每个 turn，纯 MC 无自举
+                a_target = np.zeros(T, dtype=np.float32)
+                for i in range(T):
+                    if at_kyoku[i] < len(kyoku_end_turns):
+                        end_turn = kyoku_end_turns[at_kyoku[i]]
+                    else:
+                        end_turn = T - 1  # 末局无结束标记时折现到游戏末
+                    discount = int(gamma_prefix[end_turn + 1] - gamma_prefix[i])
+                    a_target[i] = np.float32(self.gamma_pow[discount] * kyoku_rewards[at_kyoku[i]])
 
                 turn_rewards = (
                     is_riichi_turn * riichi_reward
@@ -235,6 +246,8 @@ class FileDatasetsIter(IterableDataset):
                         shantens[i],
                         fuuro_counts[i],
                         riichi_turns[i],
+                        final_pts,
+                        a_target[i],
                     ]
                     if self.oracle:
                         entry.insert(1, invisible_obs[i])

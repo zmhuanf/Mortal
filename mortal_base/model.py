@@ -300,6 +300,11 @@ class DQN(nn.Module):
         v = self.v_head(phi)
         return v if self.num_heads > 1 else v.squeeze(-1)
 
+    def advantage(self, phi: Tensor, mask: Tensor) -> Tensor:
+        """暴露 dueling 的 A 分支 (N,K,A)，供 A 头事件监督回归"""
+        a = self.a_head(phi).view(-1, self.num_heads, ACTION_SPACE)
+        return a.masked_fill(~mask.unsqueeze(1), 0.)
+
 
 class GRP(nn.Module):
     """全局排名预测器：局序特征序列 → 每局末各玩家排名概率矩阵"""

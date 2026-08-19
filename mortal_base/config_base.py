@@ -29,7 +29,7 @@ config = {
     'env': {
         'pts': [10.0, 4.0, -1.0, -5.0],
         'gamma': 0.99,
-        'n_step': 5,
+        'n_step': 3,
     },
     'model': {
         'widths': (256, 384, 512),   # 三阶段通道递增
@@ -51,17 +51,19 @@ config = {
         'shanten_weight': 0.1,
         'fuuro_weight': 0.05,
         'riichi_turn_weight': 0.05,
+        'a_reg_weight': 0.5,  # A 头事件监督权重（MC 结算折现回归）
     },
     'iql': {
-        'tau': 0.7,
-        'beta': 3.0,
-        'clip': 3.0,  # exp_adv 权重上限：抑制 V 不准时的噪声优势放大，且防 fp16 溢出
+        'tau': 0.5,
+        'beta': 1.5,  # AWR 温度：σ(adv)=0.53 的理论值过激进导致权重爆炸，提至 1.5 保稳
+        'beta_end': 2.0,  # 局末锚定 turn = σ(adv_end)=1.93（理论值）
+        'clip': 20.0,  # exp_adv 权重上限：基础版与 baseline_v1 对齐，撤销收窄实验
         'ema_decay': 0.995,
     },
     'reward': {
-        'riichi': 0.3,
-        'agari': 1.5,
-        'houjuu': -2.0,  # 放炮惩罚重于和牌奖励：送分 + 排名双输
+        'riichi': 0,
+        'agari': 0,
+        'houjuu': 0,
     },
     'grp': {
         'state_file': 'D:/Workspace/Mortal/mortal/grp_v2/grp_best.pth',
@@ -86,8 +88,8 @@ config = {
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'scheduler': {
-            'peak': 3e-6,
-            'final': 3e-6,
+            'peak': 3e-5,
+            'final': 3e-5,
             'init': 1e-8,
             'warm_up_steps': 5000,
             'max_steps': 5000,

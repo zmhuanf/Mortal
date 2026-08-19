@@ -200,7 +200,7 @@ def main():
         for tp, p in zip(target_dqn.parameters(), dqn.parameters()):
             tp.lerp_(p, 1 - ema_decay)
 
-    def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns):
+    def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns, final_pts, a_targets):
         nonlocal steps
         obs = obs.to(device=device, non_blocking=True)
         actions = actions.to(device=device, non_blocking=True)
@@ -213,6 +213,8 @@ def main():
         shantens = shantens.to(device=device, non_blocking=True)
         fuuro_counts = fuuro_counts.to(device=device, non_blocking=True)
         riichi_turns = riichi_turns.to(device=device, non_blocking=True)
+        final_pts = final_pts.to(device=device, non_blocking=True)
+        a_targets = a_targets.to(device=device, non_blocking=True)
 
         # scheduler.step() 先于 optimizer.step() 生效（LambdaLR 语义）
         lr = current_lr()
@@ -228,7 +230,11 @@ def main():
             with torch.no_grad():
                 next_phi = target_mortal(next_obs)
                 next_v = target_dqn.value(next_phi)  # (N, K)
-                q_target = n_step_rewards.unsqueeze(-1) + gamma_n * next_v * (~is_episode_end).unsqueeze(-1)
+                q_target = torch.where(
+                    is_episode_end.unsqueeze(-1),
+                    final_pts.unsqueeze(-1),  # 终局锚定：局末用真实排名 pts 定标
+                    n_step_rewards.unsqueeze(-1) + gamma_n * next_v * (~is_episode_end).unsqueeze(-1),
+                )
             v = dqn.value(phi)  # (N, K)
             td = q_target - v
             v_loss = torch.where(td > 0, iql['tau'] * td ** 2, (1 - iql['tau']) * td ** 2).mean()
@@ -237,7 +243,8 @@ def main():
             # AWR 策略提取：优势指数加权 CE
             with torch.no_grad():
                 adv = q_target - v
-                exp_adv = (adv.mean(-1) / iql['beta']).clamp(max=iql['clip']).exp()
+                beta = torch.where(is_episode_end, iql['beta_end'], iql['beta'])  # 分桶温度
+                exp_adv = (adv.mean(-1) / beta).clamp(max=iql['clip']).exp()
             log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)
             policy_loss = -(exp_adv * log_prob).mean()
 
@@ -246,6 +253,9 @@ def main():
             shanten_loss = ce(shanten_logits, shantens)
             fuuro_loss = ce(fuuro_logits, fuuro_counts)
             riichi_turn_loss = ce(riichi_turn_logits, riichi_turns)
+            # A 头事件监督：A(s,真实动作) 回归到本局结算的折现回报，纯 MC 无自举
+            a_act = dqn.advantage(phi, masks)[range(B), :, actions]  # (N, K)
+            a_reg_loss = ((a_act - a_targets.unsqueeze(-1)) ** 2).mean()
 
             loss = (
                 v_loss + policy_loss + dqn_loss
@@ -253,6 +263,7 @@ def main():
                 + shanten_loss * aux_w['shanten_weight']
                 + fuuro_loss * aux_w['fuuro_weight']
                 + riichi_turn_loss * aux_w['riichi_turn_weight']
+                + a_reg_loss * aux_w['a_reg_weight']
             )
 
         scaler.scale(loss).backward()
@@ -265,11 +276,11 @@ def main():
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
         update_target()
-        return loss, v_loss, policy_loss, dqn_loss, next_rank_loss, shanten_loss, fuuro_loss, riichi_turn_loss
+        return loss, v_loss, policy_loss, dqn_loss, next_rank_loss, shanten_loss, fuuro_loss, riichi_turn_loss, a_reg_loss
 
     import math
     import random
-    loss_sum = {k: 0.0 for k in ('v', 'policy', 'dqn', 'next_rank', 'shanten', 'fuuro', 'riichi_turn')}
+    loss_sum = {k: 0.0 for k in ('v', 'policy', 'dqn', 'next_rank', 'shanten', 'fuuro', 'riichi_turn', 'a_reg')}
     n_batch = 0
     pb = tqdm(total=None if post_training else max_steps, initial=steps, desc='TRAIN', unit='step')
 
