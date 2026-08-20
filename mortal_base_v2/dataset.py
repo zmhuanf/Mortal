@@ -33,6 +33,7 @@ class FileDatasetsIter(IterableDataset):
         self.cursor = mp.Value('q', resume_files)
 
     def build_iter(self):
+        self.buffer = []
         if self.random_files:
             rng = random.Random()
             self.buffer_rng = random.Random()

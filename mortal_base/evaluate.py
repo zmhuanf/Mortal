@@ -147,9 +147,17 @@ def load_opponent(state_file, device, name):
     state = torch.load(state_file, weights_only=True, map_location='cpu')
     cfg = state['config']
     brain = V4Brain(version=cfg['control']['version'], **cfg['resnet']).to(device).eval()
-    brain.load_state_dict(state['mortal'], strict=False)
+    missing, unexpected = brain.load_state_dict(state['mortal'], strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            f'{name}: brain state dict mismatch missing={len(missing)} unexpected={len(unexpected)}'
+        )
     dqn = V4DQN(num_heads=cfg.get('dqn', {}).get('num_heads', 1)).to(device).eval()
-    dqn.load_state_dict(state['current_dqn'], strict=False)
+    missing, unexpected = dqn.load_state_dict(state['current_dqn'], strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            f'{name}: dqn state dict mismatch missing={len(missing)} unexpected={len(unexpected)}'
+        )
     action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q'
     return MortalEngine(brain, dqn, is_oracle=False, version=4, device=device,
                         enable_rule_based_agari_guard=True, name=name, action_source=action_source)

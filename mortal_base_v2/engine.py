@@ -14,13 +14,15 @@ from typing import *
 class PolicyEngine:
     def __init__(self, brain, is_oracle, version, device=None, enable_amp=False,
                  amp_dtype=torch.float16, enable_rule_based_agari_guard=False, name='mortal_base_v2',
-                 boltzmann_epsilon=0, boltzmann_temp=1, top_p=1):
+                 enable_quick_eval=False, boltzmann_epsilon=0, boltzmann_temp=1, top_p=1):
         self.engine_type = 'mortal'
         self.device = device or torch.device('cpu')
         self.brain = brain.to(self.device).eval()
+        self.is_oracle = is_oracle
         self.version = version
         self.enable_amp = enable_amp
         self.amp_dtype = amp_dtype
+        self.enable_quick_eval = enable_quick_eval
         self.enable_rule_based_agari_guard = enable_rule_based_agari_guard
         self.name = name
         self.boltzmann_epsilon = boltzmann_epsilon

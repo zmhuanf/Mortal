@@ -169,6 +169,9 @@ def main():
 
     loss_sum = 0.0
     n_batch = 0
+    if eval_every > 0 and steps % eval_every == 0 and steps > 0:
+        logging.info(f'catch-up eval @{steps} before resuming')
+        maybe_evaluate()
     pb = tqdm(total=None if post_training else max_steps, initial=steps, desc='BC', unit='step')
     while True:
         try:

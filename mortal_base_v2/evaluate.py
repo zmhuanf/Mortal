@@ -45,19 +45,33 @@ class _V4ConvNeXtBlock(nn.Module):
         return residual + x.transpose(1, 2)
 
 
+class _V4Encoder(nn.Module):
+    """baseline_v1 编码器：单阶段 ConvNeXt，键名 encoder.net.* 与 checkpoint 严格一致"""
+
+    def __init__(self, in_channels, conv_channels, num_blocks, *, layer_scale=1e-6, drop_rate=0.0):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv1d(in_channels, conv_channels, kernel_size=3, padding=1, bias=False),
+            *[_V4ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
+              for _ in range(num_blocks)],
+            nn.Conv1d(conv_channels, 32, kernel_size=3, padding=1),
+            nn.GELU(),
+            nn.Flatten(),
+            nn.Linear(32 * 34, 1024),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
 class V4Brain(nn.Module):
     """baseline 等 v4 对手的策略网络：ConvNeXt 编码 + GELU + policy 头"""
 
     def __init__(self, *, conv_channels, num_blocks, layer_scale=1e-6, drop_rate=0.0, **kwargs):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv1d(obs_shape(4)[0], conv_channels, 3, padding=1, bias=False),
-            *[_V4ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
-              for _ in range(num_blocks)],
-            nn.Conv1d(conv_channels, 32, 3, padding=1),
-            nn.GELU(),
-            nn.Flatten(),
-            nn.Linear(32 * 34, 1024),
+        self.encoder = _V4Encoder(
+            obs_shape(4)[0], conv_channels, num_blocks,
+            layer_scale=layer_scale, drop_rate=drop_rate,
         )
         self.actv = nn.GELU()
         self.policy_head = nn.Linear(1024, ACTION_SPACE)
@@ -111,7 +125,11 @@ def load_opponent(state_file, device, name):
     state = torch.load(state_file, weights_only=True, map_location='cpu')
     cfg = state['config']
     brain = V4Brain(version=cfg['control']['version'], **cfg['resnet']).to(device).eval()
-    brain.load_state_dict(state['mortal'], strict=False)
+    missing, unexpected = brain.load_state_dict(state['mortal'], strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            f'{name}: state dict mismatch missing={len(missing)} unexpected={len(unexpected)}'
+        )
     return PolicyEngine(brain, is_oracle=False, version=4, device=device,
                         enable_amp=True, enable_rule_based_agari_guard=True,
                         name=name, amp_dtype=torch.bfloat16)

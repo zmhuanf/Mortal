@@ -53,12 +53,12 @@ config = {
         'shuffle_seed': 42,
     },
     'optim': {
-        'eps': 3e-5,
+        'eps': 1e-8,
         'betas': [0.9, 0.999],
         'weight_decay': 0.1,
         'max_grad_norm': 1.0,
         'lr': 3e-5,  # 恒定学习率（post_training 持续训练）
-        'warm_up_steps': 5000,
+        'warm_up_steps': 1,
     },
     'train': {
         'max_steps': 600000,
