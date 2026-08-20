@@ -240,6 +240,51 @@ class Brain(nn.Module):
         pass
 
 
+class EventModel(nn.Module):
+    """事件世界模型：给定 (phi, 动作) 预测未来 horizon 步事件序列（非自回归）
+
+    事件类别：0=无事 1=立直 2=和牌 3=放铳 4=流局 5=被自摸
+    roll 回报按生存概率截断折现，仅依赖监督式事件预测，不碰 Q
+    """
+
+    def __init__(self, *, phi_dim: int = 1024, action_space: int = ACTION_SPACE,
+                 horizon: int = 10, n_types: int = 6,
+                 dim: int = 256, heads: int = 4, layers: int = 1,
+                 rewards: list[float] | None = None):
+        super().__init__()
+        self.horizon = horizon
+        self.n_types = n_types
+        self.rewards = rewards or [0.0, 0.3, 1.5, -1.5, 0.0, -1.5]
+        self.action_emb = nn.Embedding(action_space, dim)
+        self.proj = nn.Linear(phi_dim + dim, dim)
+        self.time_pos = nn.Parameter(torch.zeros(1, horizon, dim))
+        nn.init.trunc_normal_(self.time_pos, std=0.02)
+        enc = nn.TransformerEncoderLayer(
+            dim, heads, dim * 4, batch_first=True, norm_first=True, activation='gelu', dropout=0.0,
+        )
+        self.encoder = nn.TransformerEncoder(enc, layers, enable_nested_tensor=False)
+        self.head = nn.Linear(dim, n_types)
+
+    def forward(self, phi: Tensor, action: Tensor) -> Tensor:
+        a = self.action_emb(action)  # (B, dim)
+        x = self.proj(torch.cat((phi, a), dim=-1)).unsqueeze(1)  # (B, 1, dim)
+        out = self.encoder(self.time_pos + x)  # (B, H, dim)
+        return self.head(out)  # (B, H, n_types)
+
+    def rollout_returns(self, logits: Tensor, *, gamma: float, rewards: list[float] | None = None) -> Tensor:
+        """事件 logits 折现为折扣事件回报，正值全额计入后按生存概率截断"""
+        rewards = rewards or self.rewards
+        probs = logits.softmax(-1)
+        terminal = probs[..., [2, 3, 5]].sum(-1)  # 和牌/放铳/被自摸
+        r = (probs * torch.as_tensor(rewards, device=logits.device, dtype=logits.dtype)).sum(-1)
+        survival = torch.cumprod((1 - terminal).clamp(min=0), dim=-1)
+        survival_before = torch.cat((torch.ones_like(terminal[..., :1]), survival[..., :-1]), dim=-1)
+        gamma_pow = torch.as_tensor(gamma, device=logits.device, dtype=logits.dtype) ** torch.arange(
+            self.horizon, device=logits.device
+        )
+        return (survival_before * r * gamma_pow).sum(-1)
+
+
 class AuxNet(nn.Module):
     """多任务辅助头，共享隐藏层后按 dims split"""
 

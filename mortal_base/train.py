@@ -28,7 +28,7 @@ from tqdm import tqdm
 
 import config_base  # 注册 config 模块，必须先于 from config import config
 from config import config
-from model import Brain, DQN, AuxNet
+from model import Brain, DQN, AuxNet, EventModel
 from dataset import FileDatasetsIter, worker_init_fn
 from evaluate import make_engine, run_eval
 
@@ -78,6 +78,8 @@ def main():
     mortal = Brain(version=version, **config['model']).to(device)
     dqn = DQN(version=version, num_heads=config['dqn']['num_heads']).to(device)
     aux_net = AuxNet().to(device)
+    event_model = EventModel(phi_dim=config['model']['phi_dim'],
+                             **{k: v for k, v in config.get('event', {}).items() if k != 'weight'}).to(device)
     target_mortal = deepcopy(mortal).eval()
     target_dqn = deepcopy(dqn).eval()
     for p in chain(target_mortal.parameters(), target_dqn.parameters()):
@@ -85,14 +87,15 @@ def main():
     logging.info(f'mortal params: {sum(p.numel() for p in mortal.parameters()):,}')
     logging.info(f'dqn params: {sum(p.numel() for p in dqn.parameters()):,}')
     logging.info(f'aux params: {sum(p.numel() for p in aux_net.parameters()):,}')
+    logging.info(f'event params: {sum(p.numel() for p in event_model.parameters()):,}')
 
     if config['control']['enable_compile']:
-        for m in (mortal, dqn, aux_net):
+        for m in (mortal, dqn, aux_net, event_model):
             m.compile()
 
     # weight decay 仅作用于 Conv1d/Linear 的 weight，参数按名字排序保证确定性
     decay_params, no_decay_params = [], []
-    for model in (mortal, dqn, aux_net):
+    for model in (mortal, dqn, aux_net, event_model):
         params_dict = {}
         to_decay = set()
         for mod_name, mod in model.named_modules():
@@ -117,14 +120,30 @@ def main():
         mortal.load_state_dict(state['mortal'])
         dqn.load_state_dict(state['current_dqn'])
         aux_net.load_state_dict(state['aux_net'])
+        if 'event_model' in state:
+            event_model.load_state_dict(state['event_model'])
+        else:
+            logging.info('no event_model in checkpoint, starting from random init')
         if 'target_mortal' in state:
             target_mortal.load_state_dict(state['target_mortal'])
             target_dqn.load_state_dict(state['target_dqn'])
         else:
             target_mortal.load_state_dict(state['mortal'])
             target_dqn.load_state_dict(state['current_dqn'])
-        optimizer.load_state_dict(state['optimizer'])
-        scaler.load_state_dict(state['scaler'])
+        # 兼容旧 checkpoint：新增 event_model 使每组参数规模变化，规模不一致时重建优化器
+        def optimizer_compatible(state_opt, live_opt):
+            """新旧优化器状态兼容性：组数与每组参数规模都一致才可恢复"""
+            if len(state_opt['param_groups']) != len(live_opt.param_groups):
+                return False
+            return all(len(sg['params']) == len(lg['params'])
+                       for sg, lg in zip(state_opt['param_groups'], live_opt.param_groups))
+
+        if optimizer_compatible(state['optimizer'], optimizer):
+            optimizer.load_state_dict(state['optimizer'])
+            scaler.load_state_dict(state['scaler'])
+        else:
+            logging.info('optimizer state incompatible (param sizes changed), fresh optimizer, scaler kept')
+            scaler.load_state_dict(state['scaler'])
         steps = state['steps']
         data_offset = state.get('data_offset', 0)
         best_perf = state.get('best_perf', best_perf)
@@ -172,6 +191,7 @@ def main():
     aux_w = config['aux']
     eval_every = config['train']['eval_every']
     eval_games = config['train']['eval_games']
+    bc_only = config['train'].get('bc_only', False)
     best_state_file = config['control']['best_state_file']
     eval_log_dir = config['eval']['log_dir']
     # 复刻 LinearWarmUpCosineAnnealingLR：LambdaLR 因子作用于 base lr=1
@@ -200,7 +220,7 @@ def main():
         for tp, p in zip(target_dqn.parameters(), dqn.parameters()):
             tp.lerp_(p, 1 - ema_decay)
 
-    def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns, final_pts, a_targets):
+    def train_batch(obs, actions, masks, player_ranks, next_obs, n_step_rewards, next_masks, is_episode_end, shantens, fuuro_counts, riichi_turns, final_pts, a_targets, event_traj):
         nonlocal steps
         obs = obs.to(device=device, non_blocking=True)
         actions = actions.to(device=device, non_blocking=True)
@@ -215,6 +235,7 @@ def main():
         riichi_turns = riichi_turns.to(device=device, non_blocking=True)
         final_pts = final_pts.to(device=device, non_blocking=True)
         a_targets = a_targets.to(device=device, non_blocking=True)
+        event_traj = event_traj.to(device=device, non_blocking=True)
 
         # scheduler.step() 先于 optimizer.step() 生效（LambdaLR 语义）
         lr = current_lr()
@@ -223,40 +244,63 @@ def main():
 
         with torch.autocast(device.type, dtype=amp_dtype, enabled=enable_amp):
             phi = mortal(obs)
-            q_out = dqn(phi, masks)  # (N, K, A)
-            q = q_out[range(B), :, actions]  # (N, K)
-
-            # IQL：expectile V 回归 + Q 回归，target 用 EMA 网络估值
-            with torch.no_grad():
-                next_phi = target_mortal(next_obs)
-                next_v = target_dqn.value(next_phi)  # (N, K)
-                q_target = torch.where(
-                    is_episode_end.unsqueeze(-1),
-                    final_pts.unsqueeze(-1),  # 终局锚定：局末用真实排名 pts 定标
-                    n_step_rewards.unsqueeze(-1) + gamma_n * next_v * (~is_episode_end).unsqueeze(-1),
-                )
-            v = dqn.value(phi)  # (N, K)
-            td = q_target - v
-            v_loss = torch.where(td > 0, iql['tau'] * td ** 2, (1 - iql['tau']) * td ** 2).mean()
-            dqn_loss = F.huber_loss(q, q_target, delta=10)
-
-            # AWR 策略提取：优势指数加权 CE
-            with torch.no_grad():
-                adv = q_target - v
-                beta = torch.where(is_episode_end, iql['beta_end'], iql['beta'])  # 分桶温度
-                exp_adv = (adv.mean(-1) / beta).clamp(max=iql['clip']).exp()
             log_prob = mortal.policy_logits(phi).log_softmax(-1).gather(1, actions.unsqueeze(-1)).squeeze(-1)
-            policy_loss = -(exp_adv * log_prob).mean()
+            if bc_only:
+                # 纯 BC：跳过全部 Q/价值计算（含 target 前向），只保留监督任务提速
+                policy_loss = -log_prob.mean()
+                zero = torch.zeros((), device=phi.device, dtype=phi.dtype)
+                v_loss = dqn_loss = a_reg_loss = zero
+            else:
+                # Q 隔离舱：detach 后 v/dqn/a_reg 梯度不再回传主干，Q 只学自己的头
+                phi_q = phi.detach()
+                q_out = dqn(phi_q, masks)  # (N, K, A)
+                q = q_out[range(B), :, actions]  # (N, K)
+
+                # IQL：expectile V 回归 + Q 回归，target 用 EMA 网络估值
+                with torch.no_grad():
+                    next_phi = target_mortal(next_obs)
+                    next_v = target_dqn.value(next_phi)  # (N, K)
+                    q_target = torch.where(
+                        is_episode_end.unsqueeze(-1),
+                        final_pts.unsqueeze(-1),  # 终局锚定：局末用真实排名 pts 定标
+                        n_step_rewards.unsqueeze(-1) + gamma_n * next_v * (~is_episode_end).unsqueeze(-1),
+                    )
+                v = dqn.value(phi_q)  # (N, K)
+                td = q_target - v
+                v_loss = torch.where(td > 0, iql['tau'] * td ** 2, (1 - iql['tau']) * td ** 2).mean()
+                dqn_loss = F.huber_loss(q, q_target, delta=10)
+
+                # AWR 策略提取：audit 期（policy_mode='bc'）权重固定 1 = 纯 BC 保底，
+                # Q 在隔离舱训练不注入策略；恢复 awr 后才用 exp-adv 加权
+                if iql['policy_mode'] == 'awr':
+                    with torch.no_grad():
+                        adv = q_target - v
+                        beta = torch.where(is_episode_end, iql['beta_end'], iql['beta'])
+                        exp_adv = (adv.mean(-1) / beta).clamp(max=iql['clip']).exp()
+                    policy_loss = -(exp_adv * log_prob).mean()
+                else:
+                    policy_loss = -log_prob.mean()
+
+                # A 头事件监督：回归事件模型预测的期望回报，无梯度不回传主干
+                with torch.no_grad():
+                    r_ev = event_model.rollout_returns(
+                        event_model(phi, actions), gamma=config['env']['gamma'],
+                        rewards=config.get('event', {}).get('rewards', [0.0, 0.79, 2.26, -1.77, 0.0, -0.74]),
+                    )  # (N,)
+                a_act = dqn.advantage(phi_q, masks)[range(B), :, actions]  # (N, K)
+                a_reg_loss = ((a_act - r_ev.unsqueeze(-1)) ** 2).mean()
+
+            event_loss = F.cross_entropy(
+                event_model(phi, actions).permute(0, 2, 1), event_traj, ignore_index=-1
+            )
 
             next_rank_logits, shanten_logits, fuuro_logits, riichi_turn_logits = aux_net(phi)
             next_rank_loss = ce(next_rank_logits, player_ranks)
             shanten_loss = ce(shanten_logits, shantens)
             fuuro_loss = ce(fuuro_logits, fuuro_counts)
             riichi_turn_loss = ce(riichi_turn_logits, riichi_turns)
-            # A 头事件监督：A(s,真实动作) 回归到本局结算的折现回报，纯 MC 无自举
-            a_act = dqn.advantage(phi, masks)[range(B), :, actions]  # (N, K)
-            a_reg_loss = ((a_act - a_targets.unsqueeze(-1)) ** 2).mean()
 
+            event_w = config.get('event', {}).get('weight', 0.1)
             loss = (
                 v_loss + policy_loss + dqn_loss
                 + next_rank_loss * aux_w['next_rank_weight']
@@ -264,6 +308,7 @@ def main():
                 + fuuro_loss * aux_w['fuuro_weight']
                 + riichi_turn_loss * aux_w['riichi_turn_weight']
                 + a_reg_loss * aux_w['a_reg_weight']
+                + event_loss * event_w
             )
 
         scaler.scale(loss).backward()
@@ -275,12 +320,13 @@ def main():
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
-        update_target()
-        return loss, v_loss, policy_loss, dqn_loss, next_rank_loss, shanten_loss, fuuro_loss, riichi_turn_loss, a_reg_loss
+        if not bc_only:
+            update_target()
+        return loss, v_loss, policy_loss, dqn_loss, next_rank_loss, shanten_loss, fuuro_loss, riichi_turn_loss, a_reg_loss, event_loss
 
     import math
     import random
-    loss_sum = {k: 0.0 for k in ('v', 'policy', 'dqn', 'next_rank', 'shanten', 'fuuro', 'riichi_turn', 'a_reg')}
+    loss_sum = {k: 0.0 for k in ('v', 'policy', 'dqn', 'next_rank', 'shanten', 'fuuro', 'riichi_turn', 'a_reg', 'event')}
     n_batch = 0
     pb = tqdm(total=None if post_training else max_steps, initial=steps, desc='TRAIN', unit='step')
 
@@ -303,6 +349,7 @@ def main():
                 'mortal': mortal.state_dict(),
                 'current_dqn': dqn.state_dict(),
                 'aux_net': aux_net.state_dict(),
+                'event_model': event_model.state_dict(),
                 'target_mortal': target_mortal.state_dict(),
                 'target_dqn': target_dqn.state_dict(),
                 'optimizer': optimizer.state_dict(),
@@ -323,10 +370,12 @@ def main():
         nonlocal best_perf
         mortal.eval()
         dqn.eval()
-        engine = make_engine(mortal, dqn, device, version, enable_amp=True)
+        event_model.eval()
+        engine = make_engine(mortal, dqn, device, version, event_model=event_model, enable_amp=True)
         result = run_eval(engine, device, games=eval_games, log_dir=eval_log_dir)
         mortal.train()
         dqn.train()
+        event_model.train()
         writer.add_scalar('eval/avg_rank', result['avg_rank'], steps)
         writer.add_scalar('eval/avg_pt', result['avg_pt'], steps)
         writer.flush()
@@ -339,6 +388,7 @@ def main():
                 'mortal': mortal.state_dict(),
                 'current_dqn': dqn.state_dict(),
                 'aux_net': aux_net.state_dict(),
+                'event_model': event_model.state_dict(),
                 'config': config,
                 'steps': steps,
                 'best_perf': best_perf,

@@ -70,6 +70,7 @@ class FileDatasetsIter(IterableDataset):
         self.n_step = config['env']['n_step']
         self.gamma = float(config['env']['gamma'])
         self.reward_cfg = config['reward']
+        self.event_horizon = config.get('event', {}).get('horizon', 10)
         # 预计算 γ^k 供 n 步内 turn 奖励折扣累加 + A 头整局结算折现（长链）
         self.gamma_pow = np.float32(self.gamma) ** np.arange(512 + 1, dtype=np.float32)
         self.shuffle_seed = shuffle_seed
@@ -204,10 +205,31 @@ class FileDatasetsIter(IterableDataset):
                     discount = int(gamma_prefix[end_turn + 1] - gamma_prefix[i])
                     a_target[i] = np.float32(self.gamma_pow[discount] * kyoku_rewards[at_kyoku[i]])
 
+                # 事件轨迹标签：每步事件类别，局末外填 -1 由 CE ignore 处理
+                # 流局与别家自摸用实际分数差分区分（正=流局/旁观，负=被自摸）
+                event_horizon = int(self.event_horizon)
+                event_ids = np.zeros(T, dtype=np.int64)
+                event_ids[is_riichi_turn] = 1
+                event_ids[is_agari_turn] = 2
+                event_ids[is_houjuu_turn] = 3
+                dones_arr = np.asarray(dones, dtype=bool)
+                other_done = dones_arr & (event_ids == 0)
+                kyoku_score_diff = scores_seq[1:, player_id] - scores_seq[:-1, player_id]
+                is_tsumogiri = other_done & (kyoku_score_diff[at_kyoku] < 0)
+                event_ids[other_done] = np.where(kyoku_score_diff[at_kyoku[other_done]] < 0, 5, 4)
+                kyoku_end = np.searchsorted(at_kyoku, at_kyoku, side='right') - 1
+                col = np.arange(event_horizon)[None, :]
+                idx = np.arange(T)[:, None] + col  # (T, H)
+                valid = idx <= kyoku_end[:, None]
+                event_traj = np.full((T, event_horizon), -1, dtype=np.int64)
+                event_traj[valid] = event_ids[idx[valid]]
+
+                tsumogiri_reward = float(self.reward_cfg.get('tsumogiri', 0.0))
                 turn_rewards = (
                     is_riichi_turn * riichi_reward
                     + is_agari_turn * agari_reward
                     + is_houjuu_turn * houjuu_reward
+                    + is_tsumogiri * tsumogiri_reward
                 ).astype(np.float32)
 
                 for i in range(T):
@@ -248,6 +270,7 @@ class FileDatasetsIter(IterableDataset):
                         riichi_turns[i],
                         final_pts,
                         a_target[i],
+                        event_traj[i],
                     ]
                     if self.oracle:
                         entry.insert(1, invisible_obs[i])

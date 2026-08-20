@@ -1,6 +1,6 @@
-"""mortal_base 评估：1v3 对战 vs 固定 v4 对手（默认 baseline_v1）
+"""mortal_base_v2 评估：1v3 对战 vs 固定 baseline_v1
 
-challenger 与 opponent 均为 MortalEngine，动作源按有无 policy_head 判定
+challenger 为 v2 纯策略引擎；opponent 为 baseline_v1（V4 架构），load_opponent 复用其结构
 """
 
 import os
@@ -10,21 +10,21 @@ from os import path
 import torch
 from torch import nn
 
-import config_base  # 注册 config 模块，必须先于 from config import config
+import config  # noqa: F401  注册 sys.modules['config']
 from config import config
-from model import Brain, DQN, EventModel
-from engine import MortalEngine
+from model import Brain
+from engine import PolicyEngine
 from libriichi.arena import OneVsThree
 from libriichi.stat import Stat
 from libriichi.consts import obs_shape, ACTION_SPACE
 
 
 class _V4ConvNeXtBlock(nn.Module):
-    """baseline_v1 训练架构的 ConvNeXtBlock：k7 单 DWConv（与 mortal/model.py 一致）"""
+    """baseline_v1 训练架构的 ConvNeXtBlock：k7 单 DWConv"""
 
     def __init__(self, channels, *, layer_scale=1e-6, drop_rate=0.0):
         super().__init__()
-        self.dwconv = nn.Conv1d(channels, channels, kernel_size=7, padding=3, groups=channels)
+        self.dwconv = nn.Conv1d(channels, channels, 7, padding=3, groups=channels)
         self.norm = nn.LayerNorm(channels)
         self.pwconv1 = nn.Linear(channels, channels * 4)
         self.actv = nn.GELU()
@@ -45,33 +45,19 @@ class _V4ConvNeXtBlock(nn.Module):
         return residual + x.transpose(1, 2)
 
 
-class _V4Encoder(nn.Module):
-    """baseline_v1 编码器：单阶段 ConvNeXt，键名 encoder.net.* 与 checkpoint 严格一致"""
-
-    def __init__(self, in_channels, conv_channels, num_blocks, *, layer_scale=1e-6, drop_rate=0.0):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv1d(in_channels, conv_channels, kernel_size=3, padding=1, bias=False),
-            *[_V4ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
-              for _ in range(num_blocks)],
-            nn.Conv1d(conv_channels, 32, kernel_size=3, padding=1),
-            nn.GELU(),
-            nn.Flatten(),
-            nn.Linear(32 * 34, 1024),
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
 class V4Brain(nn.Module):
     """baseline 等 v4 对手的策略网络：ConvNeXt 编码 + GELU + policy 头"""
 
     def __init__(self, *, conv_channels, num_blocks, layer_scale=1e-6, drop_rate=0.0, **kwargs):
         super().__init__()
-        self.encoder = _V4Encoder(
-            obs_shape(4)[0], conv_channels, num_blocks,
-            layer_scale=layer_scale, drop_rate=drop_rate,
+        self.encoder = nn.Sequential(
+            nn.Conv1d(obs_shape(4)[0], conv_channels, 3, padding=1, bias=False),
+            *[_V4ConvNeXtBlock(conv_channels, layer_scale=layer_scale, drop_rate=drop_rate)
+              for _ in range(num_blocks)],
+            nn.Conv1d(conv_channels, 32, 3, padding=1),
+            nn.GELU(),
+            nn.Flatten(),
+            nn.Linear(32 * 34, 1024),
         )
         self.actv = nn.GELU()
         self.policy_head = nn.Linear(1024, ACTION_SPACE)
@@ -104,55 +90,31 @@ class V4DQN(nn.Module):
         return q
 
 
-def make_engine(mortal, dqn, device, version, *, name='mortal_base', event_model=None,
-                action_mode=None, search_k=None, search_alpha=None, search_gamma=None, enable_amp=False):
-    """用内存中的 mortal/dqn 构造挑战者引擎，train/eval 共用"""
+def make_engine(brain, device, version, *, name='mortal_base_v2', enable_amp=False):
     amp_dtype = torch.bfloat16 if config['control'].get('amp_dtype', 'float16') == 'bfloat16' else torch.float16
-    action_mode = action_mode or config['eval'].get('action_mode', 'policy')
-    search_cfg = config['eval'].get('search', {})
-    vrisk_cfg = config['eval'].get('vrisk', {})
-    return MortalEngine(
-        mortal, dqn, is_oracle=False, version=version, device=device,
-        enable_amp=enable_amp, enable_rule_based_agari_guard=True,
-        name=name, action_source=action_mode, event_model=event_model,
-        search_k=search_k if search_k is not None else search_cfg.get('k', 8),
-        search_alpha=search_alpha if search_alpha is not None else search_cfg.get('alpha', 0.0),
-        search_gamma=search_gamma if search_gamma is not None else search_cfg.get('gamma', 0.99),
-        risk_gain=vrisk_cfg.get('gain', 0.3),
-        risk_v_mid=vrisk_cfg.get('v_mid', 1.6),
-        risk_w_riichi=vrisk_cfg.get('w_riichi', 1.0),
-        risk_w_agari=vrisk_cfg.get('w_agari', 1.0),
-        amp_dtype=amp_dtype,
-    )
+    return PolicyEngine(brain, is_oracle=False, version=version, device=device,
+                        enable_amp=enable_amp, enable_rule_based_agari_guard=True,
+                        name=name, amp_dtype=amp_dtype)
 
 
 def load_model(state_file, device):
-    """加载 mortal_base 自身 checkpoint 为 challenger 引擎"""
+    """加载 v2 checkpoint（仅 policy）为 challenger 引擎"""
     state = torch.load(state_file, weights_only=False, map_location=device)
     cfg = state['config']
-    mortal = Brain(version=cfg['control']['version'], **cfg['model']).to(device).eval()
-    mortal.load_state_dict(state['mortal'])
-    dqn = DQN(version=cfg['control']['version'], **cfg['dqn']).to(device).eval()
-    dqn.load_state_dict(state['current_dqn'])
-    event_model = None
-    if 'event_model' in state:
-        event_model = EventModel(phi_dim=cfg['model'].get('phi_dim', 1024),
-                                 **{k: v for k, v in cfg.get('event', {}).items() if k != 'weight'}).to(device).eval()
-        event_model.load_state_dict(state['event_model'])
-    return make_engine(mortal, dqn, device, cfg['control']['version'], event_model=event_model)
+    brain = Brain(version=cfg['control']['version'], **cfg['model']).to(device).eval()
+    brain.load_state_dict(state['mortal'])
+    return make_engine(brain, device, cfg['control']['version'])
 
 
 def load_opponent(state_file, device, name):
-    """baseline_v1 等 v4 对手，strict=False 容忍结构差异，action_source 按有无 policy_head 判定"""
+    """baseline_v1 等 v4 对手，strict=False 容忍结构差异，policy 直出"""
     state = torch.load(state_file, weights_only=True, map_location='cpu')
     cfg = state['config']
     brain = V4Brain(version=cfg['control']['version'], **cfg['resnet']).to(device).eval()
     brain.load_state_dict(state['mortal'], strict=False)
-    dqn = V4DQN(num_heads=cfg.get('dqn', {}).get('num_heads', 1)).to(device).eval()
-    dqn.load_state_dict(state['current_dqn'], strict=False)
-    action_source = 'policy' if 'policy_head.weight' in state['mortal'] else 'q'
-    return MortalEngine(brain, dqn, is_oracle=False, version=4, device=device,
-                        enable_rule_based_agari_guard=True, name=name, action_source=action_source)
+    return PolicyEngine(brain, is_oracle=False, version=4, device=device,
+                        enable_amp=True, enable_rule_based_agari_guard=True,
+                        name=name, amp_dtype=torch.bfloat16)
 
 
 def run_eval(model, device=None, *, games=None, opponents=None, log_dir=None):
@@ -172,19 +134,16 @@ def run_eval(model, device=None, *, games=None, opponents=None, log_dir=None):
         sub_dir = path.join(log_dir, f'op_{i:02d}')
         champ = load_opponent(op['state_file'], device, op['name'])
         totals = [0, 0, 0, 0]
-        # 分段评估：窗口内存随 seed 数线性增长，段间重建引擎释放
         for seg_start in range(0, per_opp, segment):
             seg_count = min(segment, per_opp - seg_start)
             env = OneVsThree(disable_progress_bar=False, log_dir=sub_dir)
             rankings, _ = env.py_vs_py(
-                challenger=model,
-                champion=champ,
-                seed_start=(10000 + i * per_opp + seg_start, 0x2000),
-                seed_count=seg_count,
+                challenger=model, champion=champ,
+                seed_start=(10000 + i * per_opp + seg_start, 0x2000), seed_count=seg_count,
             )
             for k in range(4):
                 totals[k] += rankings[k]
-        stat = Stat.from_dir(sub_dir, 'mortal_base')
+        stat = Stat.from_dir(sub_dir, 'mortal_base_v2')
         results.append((op['name'], totals, stat))
     torch.backends.cudnn.benchmark = config['control']['enable_cudnn_benchmark']
 
@@ -200,18 +159,13 @@ def run_eval(model, device=None, *, games=None, opponents=None, log_dir=None):
 
 if __name__ == '__main__':
     import argparse
-
-    parser = argparse.ArgumentParser(description='mortal_base 1v3 评估')
-    parser.add_argument('--state-file', default=None, help='评估用 checkpoint，默认取 control.state_file')
-    parser.add_argument('--games', type=int, default=None, help='覆盖 eval.games')
-    args = parser.parse_args()
-
+    ap = argparse.ArgumentParser(description='mortal_base_v2 1v3 评估')
+    ap.add_argument('--state-file', default=None, help='评估用 checkpoint，默认取 control.state_file')
+    ap.add_argument('--games', type=int, default=None, help='覆盖 eval.games')
+    args = ap.parse_args()
     device = torch.device(config['control']['device'])
     state_file = args.state_file or config['control']['state_file']
     model = load_model(state_file, device)
     result = run_eval(model, device, games=args.games)
     print(f'avg rank: {result["avg_rank"]:.4}')
     print(f'avg pt: {result["avg_pt"]:.4}')
-    for name, rankings, stat in result['results']:
-        op_avg = sum((i + 1) * c for i, c in enumerate(rankings)) / max(1, sum(rankings))
-        print(f'  vs {name}: {rankings} ({op_avg:.4})')

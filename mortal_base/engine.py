@@ -8,6 +8,7 @@ import traceback
 import torch
 import numpy as np
 from torch.distributions import Categorical
+from libriichi.consts import ACTION_SPACE
 from typing import *
 
 
@@ -30,6 +31,15 @@ class MortalEngine:
         uncertainty_scale=0,
         temperature=None,
         action_source='q',
+        event_model=None,
+        search_k=8,
+        search_alpha=0.0,
+        search_gamma=0.99,
+        event_rewards=None,
+        risk_gain=0.3,
+        risk_v_mid=1.6,
+        risk_w_riichi=1.0,
+        risk_w_agari=1.0,
     ):
         self.engine_type = 'mortal'
         self.device = device or torch.device('cpu')
@@ -52,6 +62,15 @@ class MortalEngine:
         self.uncertainty_scale = uncertainty_scale
         self.temperature = temperature
         self.action_source = action_source
+        self.event_model = event_model
+        self.search_k = search_k
+        self.search_alpha = search_alpha
+        self.search_gamma = search_gamma
+        self.event_rewards = event_rewards or [0.0, 0.79, 2.26, -1.77, 0.0, -0.74]
+        self.risk_gain = risk_gain
+        self.risk_v_mid = risk_v_mid
+        self.risk_w_riichi = risk_w_riichi
+        self.risk_w_agari = risk_w_agari
 
     def react_batch(self, obs, masks, invisible_obs, indexes=None):
         try:
@@ -72,7 +91,41 @@ class MortalEngine:
 
         phi = self.brain(obs, invisible_obs)
 
-        if self.action_source == 'policy':
+        if self.action_source == 'search':
+            # 想象搜索：全部合法动作作为候选（top-k 会漏掉防守牌，全展开让事件模型看到完整选项）
+            logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)
+            k = ACTION_SPACE
+            cand = torch.arange(k, device=phi.device).repeat(batch_size)
+            phi_k = phi.unsqueeze(1).expand(batch_size, k, -1).reshape(-1, phi.shape[-1])
+            ev_logits = self.event_model(phi_k, cand)  # (B*k, H, n_types)
+            rollout = self.event_model.rollout_returns(
+                ev_logits, gamma=self.search_gamma, rewards=self.event_rewards
+            ).view(batch_size, k)
+            if self.search_alpha > 0 and self.dqn is not None:
+                q = self.dqn(phi, masks)
+                q_mean = q.mean(1) if self.num_heads > 1 else q.squeeze(1)
+                # 候选即全体动作，无需 gather
+                z = lambda x: (x - x.mean(-1, keepdim=True)) / x.std(-1, keepdim=True).clamp_min(1e-8)  # noqa: E731
+                score = self.search_alpha * z(q_mean) + (1 - self.search_alpha) * z(rollout)
+            else:
+                score = rollout
+            score = score.masked_fill(~masks, -torch.inf)  # 非法候选剔除
+            sel = score.argmax(-1)
+            values = logits  # 与 policy 分支同形状 (B, A)，Rust 接口要求每动作一个值
+        elif self.action_source == 'vrisk':
+            # V 风险调节：领先（V 高）压立直/和牌倾向，落后（V 低）抬激进，其余切牌不动
+            logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)
+            if self.dqn is not None:
+                v = self.dqn.value(phi)
+                v = v.mean(-1) if v.dim() > 1 else v
+                delta = self.risk_gain * (v - self.risk_v_mid)  # >0 领先=压制，<0 落后=鼓励
+                l = logits.clone()
+                b = torch.arange(batch_size, device=phi.device)
+                l[b, torch.full((batch_size,), 37, device=phi.device)] -= delta * self.risk_w_riichi
+                l[b, torch.full((batch_size,), 43, device=phi.device)] -= delta * self.risk_w_agari
+                logits = l.masked_fill(~masks, -torch.inf)
+            values = logits
+        elif self.action_source == 'policy':
             logits = self.brain.policy_logits(phi).masked_fill(~masks, -torch.inf)
             if self.uncertainty_scale > 0 and self.num_heads > 1:
                 q_out = self.dqn(phi, masks)
@@ -88,7 +141,10 @@ class MortalEngine:
             logits = q_mean.masked_fill(~masks, -torch.inf)
             values = q_mean
 
-        if self.boltzmann_epsilon > 0:
+        if self.action_source == 'search':
+            is_greedy = torch.ones(batch_size, dtype=torch.bool, device=self.device)
+            actions = sel
+        elif self.boltzmann_epsilon > 0:
             is_greedy = torch.full((batch_size,), 1 - self.boltzmann_epsilon, device=self.device).bernoulli().to(torch.bool)
             if self.temperature is not None and self.temperature > 0:
                 masked = logits.masked_fill(~masks, 0.)
